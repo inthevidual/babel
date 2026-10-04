@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Babel</title>
+<meta name="description" content="Translate Word documents side by side. The layout stays put; only the words change. Everything stays in your browser.">
+<meta name="theme-color" content="#f1efea" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#18191b" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="Babel">
+<meta property="og:description" content="Side-by-side translation of Word documents with layout fidelity, autosave and spelling and grammar checks.">
+<meta property="og:url" content="https://babel.cptjanst.se/">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231f4fa8'/%3E%3Cpath d='M11 9h10v4H11zM8 14h16v4H8zM5 19h22v5H5z' fill='%23f3d58a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="app.css">
+<script src="vendor/jszip.min.js"></script>
+<script type="module" src="js/main.js"></script>
+</head>
+<body>
+
+<header class="bar">
+  <a class="brand" href="#" title="All translations">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M11 9h10v4H11zM8 14h16v4H8zM5 19h22v5H5z"/></svg>
+    <span>Babel</span>
+  </a>
+  <div class="bar-doc" id="barDoc" hidden>
+    <span class="doc-name" id="docName"></span>
+    <button class="lang-pill" id="langPill" title="Change target language"></button>
+  </div>
+  <div class="bar-tools" id="barTools" hidden>
+    <span class="save" id="saveState" role="status" aria-live="polite"></span>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button id="zoomOut" title="Zoom out">−</button>
+      <button id="zoomVal" title="Fit to width">100 %</button>
+      <button id="zoomIn" title="Zoom in">+</button>
+    </div>
+    <label class="toggle" title="Scroll both documents together"><input type="checkbox" id="syncScroll" checked> Sync</label>
+    <button class="ghost" id="btnVersions">Versions</button>
+    <button class="ghost" id="btnSettings">Settings</button>
+    <button class="ghost icon" id="btnHelp" title="Keyboard shortcuts and help">?</button>
+    <button class="primary" id="btnDownload">Download .docx</button>
+  </div>
+</header>
+
+<main id="home" class="home" hidden>
+  <div class="home-inner">
+    <h1 class="wordmark">Babel</h1>
+    <p class="lede">Translate Word documents side by side. The layout stays put; only the words change.</p>
+
+    <label class="drop" id="drop" tabindex="0">
+      <input type="file" id="fileInput" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+      <strong>Open a Word document</strong>
+      <span>Drop a .docx here or click to choose. It never leaves this browser.</span>
+    </label>
+
+    <details class="resume">
+      <summary>Continue from a translated file</summary>
+      <p>If you have the original and a translation previously downloaded from Babel (or with the same paragraph structure), pair them to pick up where you left off.</p>
+      <div class="resume-row">
+        <label>Original <input type="file" id="resumeSrc" accept=".docx"></label>
+        <label>Translation <input type="file" id="resumeTgt" accept=".docx"></label>
+        <button class="primary" id="resumeGo" disabled>Pair and open</button>
+      </div>
+    </details>
+
+    <section class="recent" id="recent" hidden>
+      <h2>Translations in this browser</h2>
+      <ul id="recentList"></ul>
+      <p class="fine" id="storageNote"></p>
+    </section>
+
+    <p class="fine privacy">Documents are kept in this browser’s storage only. When proofing is on, the text of edited paragraphs is sent to LanguageTool for spelling and grammar checks; you can turn that off in Settings.</p>
+  </div>
+</main>
+
+<main id="work" class="work" hidden>
+  <section class="panel" id="srcPanel" aria-label="Source document">
+    <div class="scroll" id="srcScroll"><div class="sizer"><div class="scaler"><div class="doc" id="srcDoc"></div></div></div></div>
+    <footer class="status" id="srcStatus"></footer>
+  </section>
+  <section class="panel" id="tgtPanel" aria-label="Target document">
+    <div class="scroll" id="tgtScroll"><div class="sizer"><div class="scaler"><div class="doc" id="tgtDoc"></div></div></div></div>
+    <footer class="status" id="tgtStatus"></footer>
+  </section>
+  <div class="loading" id="loading"><div class="spinner"></div><span id="loadingText">Opening…</span></div>
+</main>
+
+<div id="docStyles" hidden></div>
+
+<div class="banner" id="banner" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="issue-pop" id="issuePop" hidden></div>
+<div class="menu" id="issueMenu" hidden></div>
+
+<dialog id="langDlg" class="dlg">
+  <form method="dialog">
+    <h2 id="langTitle">Translate into…</h2>
+    <p class="fine" id="langSub"></p>
+    <input type="search" id="langSearch" placeholder="Search languages" autocomplete="off">
+    <div class="lang-list" id="langList" role="listbox"></div>
+    <div class="dlg-actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button value="ok" class="primary" id="langOk" disabled>Start translating</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="versionsDlg" class="dlg wide">
+  <form method="dialog">
+    <h2>Versions</h2>
+    <p class="fine">Babel saves continuously and keeps a version every few minutes while you work, plus one before every restore and download. Restoring keeps a copy of the current state first, so nothing is ever lost.</p>
+    <div class="dlg-row">
+      <input type="text" id="versionName" placeholder="Name this version (optional)">
+      <button type="button" class="ghost" id="versionSave">Save version now</button>
+    </div>
+    <ul class="versions" id="versionList"></ul>
+    <p class="fine" id="versionStorage"></p>
+    <div class="dlg-actions"><button value="close" class="primary">Close</button></div>
+  </form>
+</dialog>
+
+<dialog id="settingsDlg" class="dlg">
+  <form method="dialog">
+    <h2>Settings</h2>
+    <fieldset>
+      <legend>Spelling and grammar</legend>
+      <label class="check"><input type="checkbox" id="setProof"> Check edited paragraphs with LanguageTool</label>
+      <label class="check"><input type="checkbox" id="setPicky"> Picky mode (more style suggestions)</label>
+      <label class="check"><input type="checkbox" id="setNative"> Also use the browser’s own spell checker</label>
+      <label>Server <input type="url" id="setEndpoint" placeholder="https://api.languagetool.org"></label>
+      <div class="dlg-row">
+        <label>Premium user <input type="text" id="setUser" autocomplete="off"></label>
+        <label>API key <input type="password" id="setKey" autocomplete="off"></label>
+      </div>
+      <p class="fine">The free service checks up to about 20 paragraphs a minute. A LanguageTool Premium account or your own server lifts that limit.</p>
+      <label>Personal dictionary <textarea id="setDict" rows="4" placeholder="One word per line"></textarea></label>
+    </fieldset>
+    <fieldset>
+      <legend>Display</legend>
+      <label class="check"><input type="checkbox" id="setMarks"> Mark translated and confirmed paragraphs in the margin</label>
+    </fieldset>
+    <div class="dlg-actions">
+      <button value="cancel" class="ghost">Cancel</button>
+      <button value="ok" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="helpDlg" class="dlg wide">
+  <form method="dialog">
+    <h2>Working in Babel</h2>
+    <div class="help-cols">
+      <div>
+        <h3>Keyboard</h3>
+        <dl class="keys">
+          <dt><kbd>Tab</kbd> / <kbd>Enter</kbd></dt><dd>Next paragraph</dd>
+          <dt><kbd>Shift</kbd> <kbd>Tab</kbd></dt><dd>Previous paragraph</dd>
+          <dt><kbd>Alt</kbd> <kbd>↓</kbd> / <kbd>↑</kbd></dt><dd>Next / previous paragraph still to translate</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>Enter</kbd></dt><dd>Confirm paragraph as done, go to the next</dd>
+          <dt><kbd>Shift</kbd> <kbd>Enter</kbd></dt><dd>Line break inside the paragraph</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>B</kbd> <kbd>I</kbd> <kbd>U</kbd></dt><dd>Bold, italic, underline</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>Z</kbd></dt><dd>Undo</dd>
+          <dt><kbd>Ctrl</kbd> <kbd>S</kbd></dt><dd>Save now (it saves by itself anyway)</dd>
+        </dl>
+      </div>
+      <div>
+        <h3>How it works</h3>
+        <p>The right-hand document starts as an exact copy of the original. Type over the text paragraph by paragraph. Paragraphs can’t be split or merged and images, footnote references and fields stay where they are, so the translated file keeps the original’s structure and styles exactly.</p>
+        <p>A bar in the left margin marks paragraphs you have changed (blue) or confirmed as done (green). A page that no longer fits gets a red edge and a note saying by how much.</p>
+        <p>Clicking an underlined word shows the suggestion. Character counts include spaces and cover the body text, footnotes and endnotes, like Word’s count.</p>
+        <p>Your work is saved in this browser as you type. <em>Versions</em> lets you go back to any earlier state.</p>
+      </div>
+    </div>
+    <div class="dlg-actions"><button value="close" class="primary">Close</button></div>
+  </form>
+</dialog>
+
+</body>
+</html>
