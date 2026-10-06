@@ -191,6 +191,8 @@ button.chip:hover { border-color: var(--accent); }
 #tgtDoc.b-marks p.b-done.b-active, #tgtDoc.b-marks p.b-done:hover { box-shadow: -7px 0 0 -4px var(--done), inset 0 0 0 9999px var(--active); }
 #srcDoc p[data-p] { cursor: pointer; }
 .b-br { user-select: none; }
+/* Nothing in a document is ever dragged (drops are refused anyway). */
+.doc, .doc * { -webkit-user-drag: none; user-drag: none; }
 
 #tgtDoc section.b-over { outline: 3px solid var(--bad); outline-offset: 0; }
 #tgtDoc section.b-over::after {

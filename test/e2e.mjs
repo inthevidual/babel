@@ -72,6 +72,20 @@ const active = await page.evaluate(() => document.activeElement.dataset.p);
 check(active === 'document:3', `Enter moved to the next paragraph (${active})`);
 const paraCount = await page.evaluate(() => __babel.P.tgt['word/document.xml'].getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'p').length);
 
+// Clicking inside a full-paragraph selection just places the caret (no
+// native drag detection), and drag-selecting still works.
+{
+  const [x, y, w, h] = await page.evaluate(() => { const r = document.querySelector('#tgtDoc p[data-p="document:3"]').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; });
+  await page.mouse.click(x + 10, y + h / 2, { clickCount: 3 });
+  const full = await page.evaluate(() => getSelection().toString().length);
+  await page.mouse.click(x + w / 4, y + h / 2);
+  const after = await page.evaluate(() => { const s = getSelection(); return { collapsed: s.isCollapsed, host: document.activeElement.dataset.p, inHost: !!s.anchorNode?.parentElement?.closest('p[data-p="document:3"]'), off: s.anchorOffset }; });
+  check(full > 10 && after.collapsed && after.host === 'document:3' && after.inHost && after.off > 0, `click inside a selection places the caret (${JSON.stringify(after)})`);
+  await page.mouse.move(x + 3, y + h / 2); await page.mouse.down(); await page.mouse.move(x + w / 2, y + h / 2, { steps: 6 }); await page.mouse.up();
+  const dragged = await page.evaluate(() => getSelection().toString().length);
+  check(dragged > 3, `drag-selecting still works (${dragged} chars)`);
+}
+
 // Deleting a footnote reference is refused.
 await page.evaluate(() => {
   const p = document.querySelector('#tgtDoc article sup').closest('p');

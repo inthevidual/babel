@@ -241,6 +241,38 @@ function wouldDeleteProtected(host, dir, unit) {
   return rangeTouchesProtected(host, r);
 }
 
+const caretAt = (x, y) => {
+  const pos = document.caretPositionFromPoint?.(x, y);
+  if (pos) return { node: pos.offsetNode, offset: pos.offset };
+  const r = document.caretRangeFromPoint?.(x, y);
+  return r ? { node: r.startContainer, offset: r.startOffset } : null;
+};
+
+// A plain click inside an existing selection makes Chrome hold the selection
+// and wait to see whether a drag of the selected text begins, which hands
+// over to the platform's drag-and-drop machinery. Babel never drags text, so
+// that path is skipped: the click places the caret at once, as anywhere else.
+// Dragging to select, double/triple click and Shift+click are untouched.
+export function guardSelectionClicks(root, { editable }) {
+  root.addEventListener('mousedown', e => {
+    if (e.button !== 0 || e.detail !== 1 || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey) return;
+    const sel = getSelection();
+    if (!sel.rangeCount || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    if (!root.contains(range.commonAncestorContainer)) return;
+    const inside = [...range.getClientRects()].some(r =>
+      e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom);
+    if (!inside) return;
+    e.preventDefault();
+    if (!editable) { sel.removeAllRanges(); return; }
+    const host = hostOf(e.target);
+    const pos = caretAt(e.clientX, e.clientY);
+    if (!host || !pos || hostOf(pos.node) !== host) { sel.removeAllRanges(); return; }
+    if (document.activeElement !== host) host.focus({ preventScroll: true });
+    sel.collapse(pos.node, pos.offset);
+  }, true);
+}
+
 // ── Behaviour ──────────────────────────────────────────────────────────────
 
 export function attach(root, cb) {

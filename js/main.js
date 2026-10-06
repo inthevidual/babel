@@ -505,6 +505,8 @@ const editorCallbacks = {
   blocked(msg) { toast(msg, 'warn'); },
 };
 E.attach(tgtRoot, editorCallbacks);
+E.guardSelectionClicks(tgtRoot, { editable: true });
+E.guardSelectionClicks(srcRoot, { editable: false });
 
 function flush(pid) {
   const pend = P?.pending.get(pid);
