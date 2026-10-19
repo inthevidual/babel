@@ -3,6 +3,7 @@
 // was given. Everything this file does not touch survives byte-for-byte.
 
 export const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+export const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 const MC = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
 const XMLNS_XML = 'http://www.w3.org/XML/1998/namespace';
 const PKG_REL = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -13,7 +14,7 @@ const JSZip = globalThis.JSZip;
 
 // ── Package ────────────────────────────────────────────────────────────────
 
-const relsPathFor = path => {
+export const relsPathFor = path => {
   const i = path.lastIndexOf('/');
   return `${path.slice(0, i + 1)}_rels/${path.slice(i + 1)}.rels`;
 };
@@ -393,6 +394,216 @@ export function replaceParagraph(target, source) {
   return copy;
 }
 
+// ── Links ──────────────────────────────────────────────────────────────────
+
+const REL_HYPERLINK = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
+
+export const emptyRels = () => parseXml(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="${PKG_REL}"/>`);
+
+// id -> target, for hyperlink relationships.
+export function relsMap(doc) {
+  const m = new Map();
+  if (!doc) return m;
+  for (const r of doc.getElementsByTagNameNS(PKG_REL, 'Relationship')) m.set(r.getAttribute('Id'), r.getAttribute('Target'));
+  return m;
+}
+
+// Adds (or reuses) an external hyperlink relationship; returns its id.
+export function addLinkRel(doc, url) {
+  const rels = [...doc.getElementsByTagNameNS(PKG_REL, 'Relationship')];
+  const same = rels.find(r => r.getAttribute('Type') === REL_HYPERLINK && r.getAttribute('Target') === url && r.getAttribute('TargetMode') === 'External');
+  if (same) return same.getAttribute('Id');
+  const ids = new Set(rels.map(r => r.getAttribute('Id')));
+  let n = 1;
+  while (ids.has(`rIdBabel${n}`)) n++;
+  const el = doc.createElementNS(PKG_REL, 'Relationship');
+  el.setAttribute('Id', `rIdBabel${n}`);
+  el.setAttribute('Type', REL_HYPERLINK);
+  el.setAttribute('Target', url);
+  el.setAttribute('TargetMode', 'External');
+  doc.documentElement.appendChild(el);
+  return `rIdBabel${n}`;
+}
+
+// HYPERLINK "url" \l "anchor" \o "tip" …
+function parseHyperlinkInstr(instr) {
+  const m = /^\s*HYPERLINK\b(.*)$/is.exec(instr ?? '');
+  if (!m) return null;
+  const anchor = /\\l\s+"([^"]*)"/i.exec(m[1])?.[1];
+  const rest = m[1].replace(/\\[a-z]\s+"[^"]*"/gi, '').replace(/\\[a-z]/gi, '');
+  const url = /"([^"]*)"/.exec(rest)?.[1] ?? rest.trim().split(/\s+/)[0] ?? '';
+  if (url) return { url: url + (anchor ? '#' + anchor : '') };
+  return anchor ? { anchor } : null;
+}
+
+// The link a run belongs to: a w:hyperlink, or a HYPERLINK field (simple or
+// complex). rels: id -> target for the run's part.
+export function linkOfRun(run, rels) {
+  const h = ancestor(run, a => isW(a, 'hyperlink'));
+  if (h) {
+    const id = h.getAttributeNS(R, 'id');
+    const anchor = h.getAttributeNS(W, 'anchor');
+    const target = id ? rels.get(id) : null;
+    if (target) return { url: target + (anchor ? '#' + anchor : '') };
+    return anchor ? { anchor } : null;
+  }
+  const fs = ancestor(run, a => isW(a, 'fldSimple'));
+  if (fs) return parseHyperlinkInstr(fs.getAttributeNS(W, 'instr'));
+  const p = ownerPara(run);
+  if (!p) return null;
+  const stack = [];
+  for (const r of p.getElementsByTagNameNS(W, 'r')) {
+    if (ownerPara(r) !== p) continue;
+    if (r === run) break;
+    const type = kids(r).find(k => isW(k, 'fldChar'))?.getAttributeNS(W, 'fldCharType');
+    if (type === 'begin') stack.push({ instr: '', result: false });
+    else if (type === 'separate') { if (stack.length) stack.at(-1).result = true; }
+    else if (type === 'end') stack.pop();
+    else {
+      const it = kids(r).find(k => isW(k, 'instrText'));
+      if (it && stack.length && !stack.at(-1).result) stack.at(-1).instr += it.textContent;
+    }
+  }
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (!stack[i].result) continue;
+    const l = parseHyperlinkInstr(stack[i].instr);
+    if (l) return l;
+  }
+  return null;
+}
+
+// The character formatting that makes a run look like a link, so a pasted
+// link looks like the one it was copied from.
+export function linkStyleOf(run) {
+  const rPr = kids(run).find(k => isW(k, 'rPr'));
+  if (!rPr) return [];
+  return kids(rPr).filter(k => ['rStyle', 'color', 'u'].includes(k.localName) && k.namespaceURI === W).map(k => ({
+    name: k.localName,
+    attrs: Object.fromEntries([...k.attributes].filter(a => a.namespaceURI === W).map(a => [a.localName, a.value])),
+  }));
+}
+
+export function hasCharStyle(stylesDoc, id) {
+  return !!stylesDoc && [...stylesDoc.getElementsByTagNameNS(W, 'style')]
+    .some(s => s.getAttributeNS(W, 'styleId') === id && s.getAttributeNS(W, 'type') === 'character');
+}
+
+const insideSkipped = (el, stop) => {
+  for (let a = el.parentElement; a && a !== stop; a = a.parentElement) {
+    if (isW(a, 'del') || isW(a, 'moveFrom') || (a.namespaceURI === MC && a.localName === 'Fallback')) return true;
+  }
+  return false;
+};
+
+// The paragraph's rendered runs with their offsets in the text the editor
+// sees: text as is, a tab or line break as one character, everything else
+// (fields, images, references) as nothing.
+export function runOffsets(p) {
+  const runs = [];
+  let text = '';
+  for (const r of p.getElementsByTagNameNS(W, 'r')) {
+    if (ownerPara(r) !== p || insideSkipped(r, p)) continue;
+    const c = kids(r).filter(k => !isW(k, 'rPr'));
+    let piece = '', t = null;
+    if (!r.hasAttribute('data-bk') && c.length === 1) {
+      const k = c[0];
+      if (isW(k, 't')) piece = t = k.textContent;
+      else if (isW(k, 'tab')) piece = '\t';
+      else if (isW(k, 'br') && (k.getAttributeNS(W, 'type') || 'textWrapping') === 'textWrapping') piece = '\n';
+    }
+    runs.push({ run: r, start: text.length, end: text.length + piece.length, text: t });
+    text += piece;
+  }
+  return { runs, text };
+}
+
+const setRunText = (r, text) => {
+  const t = kids(r).find(k => isW(k, 't'));
+  t.textContent = text;
+  t.setAttributeNS(XMLNS_XML, 'xml:space', 'preserve');
+};
+
+// Every run in the paragraph becomes first-class (an id, no generated mark),
+// as it is about to be rendered afresh.
+export function adoptRuns(p, key) {
+  for (const r of p.getElementsByTagNameNS(W, 'r')) {
+    if (ownerPara(r) !== p) continue;
+    if (r.hasAttribute('data-bgen') || !r.getAttribute('data-br')) {
+      r.removeAttribute('data-bgen');
+      r.setAttribute('data-br', `${key}:k${crypto.randomUUID().slice(0, 8)}`);
+    }
+  }
+}
+
+// Makes [start, end) of the paragraph's text a hyperlink. link: {relId} or
+// {anchor}. style: [{name, attrs}] run properties to give the linked text.
+// Returns null on success, or a message saying why it can't be done.
+export function linkRange(p, start, end, link, style) {
+  if (end <= start) return 'Select the text to link first.';
+  let { runs } = runOffsets(p);
+  const splitAt = pos => {
+    const e = runs.find(x => x.text != null && x.start < pos && pos < x.end);
+    if (!e) return;
+    const clone = e.run.cloneNode(true);
+    clone.removeAttribute('data-br');
+    clone.removeAttribute('data-bgen');
+    setRunText(e.run, e.text.slice(0, pos - e.start));
+    setRunText(clone, e.text.slice(pos - e.start));
+    e.run.after(clone);
+    runs = runOffsets(p).runs;
+  };
+  splitAt(end);
+  splitAt(start);
+  const covered = runs.filter(x => x.start >= start && x.end <= end && x.end > x.start);
+  if (!covered.length) return 'There is no text in the selection to link.';
+  const first = covered[0].run, last = covered.at(-1).run;
+  const parent = first.parentNode;
+  const crosses = 'The selection crosses a link, field or tracked change. Select text inside one of them.';
+  if (last.parentNode !== parent) return crosses;
+
+  let h;
+  if (isW(parent, 'hyperlink')) {
+    // Already a link: give it the new address.
+    h = parent;
+    h.removeAttributeNS(R, 'id');
+    h.removeAttributeNS(W, 'anchor');
+  } else {
+    if (!(isW(parent, 'p') || isW(parent, 'ins') || isW(parent, 'smartTag') || isW(parent, 'sdtContent') || isW(parent, 'customXml'))) return crosses;
+    const nodes = [];
+    for (let n = first; n; n = n.nextSibling) { nodes.push(n); if (n === last) break; }
+    if (nodes.some(n => n.nodeType === 1 && (isW(n, 'hyperlink') || isW(n, 'fldSimple')
+      || (isW(n, 'r') && kids(n).some(k => isW(k, 'fldChar') || isW(k, 'instrText')))))) return crosses;
+    h = p.ownerDocument.createElementNS(W, 'w:hyperlink');
+    first.before(h);
+    for (const n of nodes) h.appendChild(n);
+  }
+  if (link.relId) {
+    h.setAttributeNS(R, 'r:id', link.relId);
+    h.setAttributeNS(W, 'w:history', '1');
+  } else {
+    h.setAttributeNS(W, 'w:anchor', link.anchor);
+  }
+  for (const r of h.getElementsByTagNameNS(W, 'r')) {
+    if (!kids(r).some(k => isW(k, 't'))) continue;
+    let rPr = kids(r).find(k => isW(k, 'rPr'));
+    if (!rPr) { rPr = p.ownerDocument.createElementNS(W, 'w:rPr'); r.insertBefore(rPr, r.firstChild); }
+    for (const { name, attrs } of style) setRPrChild(rPr, name, attrs);
+  }
+  return null;
+}
+
+// A hyperlink whose relationship is missing makes Word refuse the file;
+// keep the text and drop the link instead.
+function dropOrphanLinks(doc, rels) {
+  for (const h of [...doc.getElementsByTagNameNS(W, 'hyperlink')]) {
+    const id = h.getAttributeNS(R, 'id');
+    if (id && !rels.has(id)) {
+      while (h.firstChild) h.before(h.firstChild);
+      h.remove();
+    }
+  }
+}
+
 // ── Export ─────────────────────────────────────────────────────────────────
 
 const strip = doc => {
@@ -459,9 +670,14 @@ export async function buildDocx({ bytes, partXml, lang }) {
   const zip = await JSZip.loadAsync(bytes);
   const pkg = await openPackage(bytes);
   const out = {};
+  for (const [path, xml] of Object.entries(partXml)) {
+    if (!pkg.textParts.includes(path)) out[path] = xml; // relationship parts
+  }
   for (const path of pkg.textParts) {
     const original = await zip.file(path).async('string');
     const doc = parseXml(partXml[path] ?? original);
+    const relsXml = partXml[relsPathFor(path)] ?? await zip.file(relsPathFor(path))?.async('string');
+    dropOrphanLinks(doc, relsMap(relsXml ? parseXml(relsXml) : null));
     strip(doc);
     mergeRuns(doc);
     if (lang) setLanguage(doc, lang);

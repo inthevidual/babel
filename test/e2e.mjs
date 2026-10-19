@@ -19,6 +19,7 @@ const check = (cond, msg) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${msg}`); 
 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome' });
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
+await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(BASE).origin });
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -144,6 +145,87 @@ for (let i = 0; i < 30 && !spelled; i++) {
 check(spelled > 0, `spelling issues highlighted (${spelled})`);
 await page.screenshot({ path: `${OUT}/babel-edit.png` });
 
+// Context menu: copy a link in the original, paste it onto target text.
+const selectWord = (word, pidHint) => page.evaluate(([word]) => {
+  const w = document.createTreeWalker(document.querySelector('#tgtDoc'), NodeFilter.SHOW_TEXT);
+  for (let n; (n = w.nextNode());) {
+    const i = n.data.indexOf(word);
+    if (i < 0 || !n.parentElement.closest('p[contenteditable="true"]')) continue;
+    const host = n.parentElement.closest('p[data-p]');
+    const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + word.length);
+    host.focus(); getSelection().removeAllRanges(); getSelection().addRange(r);
+    const b = r.getBoundingClientRect();
+    return { pid: host.dataset.p, x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  }
+  return null;
+}, [word]);
+{
+  const linkBox = await page.evaluate(() => {
+    const a = document.querySelector('#srcDoc a');
+    a.scrollIntoView({ block: 'center' });
+    const b = a.getBoundingClientRect(); return { x: b.left + 5, y: b.top + b.height / 2 };
+  });
+  await page.waitForTimeout(300);
+  await page.mouse.click(linkBox.x, linkBox.y, { button: 'right' });
+  const items = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent.replace(/\s+/g, ' ').trim()));
+  check(items.some(t => t.startsWith('Copy link') && t.includes('https://example.org/')), `source menu offers Copy link (${items.join(' | ')})`);
+  await page.click('#ctxMenu .menu-item:has-text("Copy link")');
+  const clip = await page.evaluate(() => navigator.clipboard.readText());
+  check(clip === 'https://example.org/', `link on the clipboard (${clip})`);
+
+  const w = await selectWord('budget');
+  await page.mouse.click(w.x, w.y, { button: 'right' });
+  const titems = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent.replace(/\s+/g, ' ').trim()));
+  check(titems.some(t => t.startsWith('Paste link')), `target menu offers Paste link (${titems.join(' | ')})`);
+  await page.click('#ctxMenu .menu-item:has-text("Paste link")');
+  await page.waitForTimeout(500);
+  const res = await page.evaluate(pid => {
+    const el = __babel.P.tgtEl.get(pid);
+    const xml = new XMLSerializer().serializeToString(el);
+    const rels = new XMLSerializer().serializeToString(__babel.P.rels['word/_rels/document.xml.rels']);
+    const a = document.querySelector(`#tgtDoc p[data-p="${pid}"] a`);
+    return { xml, rels, a: a?.textContent };
+  }, w.pid);
+  const relId = res.xml.match(/<w:hyperlink [^>]*r:id="([^"]+)"/)?.[1];
+  check(/<w:hyperlink[^>]*>(?:(?!<\/w:hyperlink>).)*<w:rStyle w:val="Hyperlink"\/>(?:(?!<\/w:hyperlink>).)*>budget<\/w:t>/.test(res.xml), 'selected word wrapped in w:hyperlink with the source link style');
+  check(relId && res.rels.includes(`Id="${relId}"`) && res.rels.includes('Target="https://example.org/"'), `relationship ${relId} added for the link`);
+  check(res.a === 'budget', `the link is shown in the translation (${res.a})`);
+
+  // Typing inside the link keeps the text in the link.
+  await page.evaluate(pid => {
+    const t = document.querySelector(`#tgtDoc p[data-p="${pid}"] a [data-k="t"]`).firstChild;
+    const r = document.createRange(); r.setStart(t, 3); r.collapse(true);
+    t.parentElement.closest('p').focus(); getSelection().removeAllRanges(); getSelection().addRange(r);
+  }, w.pid);
+  await page.keyboard.type('XX');
+  await page.waitForTimeout(400);
+  const typed = await page.evaluate(pid => new XMLSerializer().serializeToString(__babel.P.tgtEl.get(pid)), w.pid);
+  check(/<w:hyperlink[^>]*>(?:(?!<\/w:hyperlink>).)*budXXget(?:(?!<\/w:hyperlink>).)*<\/w:hyperlink>/.test(typed), 'typing inside the link stays in the link');
+
+  // Ctrl+K with a web address copied elsewhere.
+  await page.evaluate(() => navigator.clipboard.writeText('www.babel-test.example/page'));
+  const w2 = await selectWord('review');
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(500);
+  const rels2 = await page.evaluate(() => new XMLSerializer().serializeToString(__babel.P.rels['word/_rels/document.xml.rels']));
+  const x2 = await page.evaluate(pid => new XMLSerializer().serializeToString(__babel.P.tgtEl.get(pid)), w2.pid);
+  check(rels2.includes('Target="https://www.babel-test.example/page"') && /<w:hyperlink[^>]*>(?:(?!<\/w:hyperlink>).)*>review<\/w:t>/.test(x2), 'Ctrl+K links the selection to the address on the clipboard');
+
+  // Selections that cross an existing link are refused, nothing changes.
+  const before = await page.evaluate(pid => new XMLSerializer().serializeToString(__babel.P.tgtEl.get(pid)), w.pid);
+  await page.evaluate(pid => {
+    const p = document.querySelector(`#tgtDoc p[data-p="${pid}"]`);
+    const r = document.createRange(); r.selectNodeContents(p);
+    p.focus(); getSelection().removeAllRanges(); getSelection().addRange(r);
+  }, w.pid);
+  await page.keyboard.press('Control+k');
+  await page.waitForTimeout(400);
+  const after = await page.evaluate(pid => new XMLSerializer().serializeToString(__babel.P.tgtEl.get(pid)), w.pid);
+  const msg = await page.textContent('#toast');
+  check(before === after && /crosses a link/.test(msg), `a selection across a link is refused (${msg.trim()})`);
+  await page.keyboard.press('Escape');
+}
+
 // Reload: everything must come back.
 await page.evaluate(() => __babel.flushAll());
 await page.waitForTimeout(1500);
@@ -152,6 +234,7 @@ await page.waitForFunction(() => document.querySelector('#loading')?.hidden && _
 const restored = await page.textContent(`#tgtDoc p[data-p="${pid}"]`);
 check(restored.startsWith('Denna rapport är ') && restored.includes('fetstil'), 'edits restored after reload');
 check(await page.evaluate(() => !!document.querySelector('#tgtDoc p[data-p="document:2"] .b-br, #tgtDoc p[data-p="document:2"] [data-k="br"]')), 'line break restored after reload');
+check(await page.evaluate(() => [...document.querySelectorAll('#tgtDoc a')].map(a => a.textContent).join('|')).then(t => t.includes('budXXget') && t.includes('review')), 'pasted links restored after reload');
 
 // Crash recovery: an edit that reaches only the journal.
 await page.evaluate(() => {
@@ -202,11 +285,15 @@ print('decl', d.startswith('<?xml'))
 import re
 print('paras', len(re.findall(r'<w:p[ >/]', d)))
 print('hdr', 'Regionala utvecklingsverket' in z.read('word/header1.xml').decode())
+import re
+rels = z.read('word/_rels/document.xml.rels').decode()
+ids = re.findall(r'<w:hyperlink [^>]*r:id="([^"]+)"', d)
+print('links', len(ids) >= 3 and all(f'Id="{i}"' in rels for i in ids) and 'babel-test.example' in rels)
 `;
 const res = execFileSync('python3', ['-c', py, file, fixture]).toString();
 console.log(res.trim().split('\n').map(l => '     ' + l).join('\n'));
 check(/names True/.test(res) && /ids False/.test(res) && /text True/.test(res) && /lang True/.test(res)
-  && /media True/.test(res) && /numbering True/.test(res) && /decl True/.test(res) && /hdr True/.test(res), 'downloaded docx is clean and complete');
+  && /media True/.test(res) && /links True/.test(res) && /numbering True/.test(res) && /decl True/.test(res) && /hdr True/.test(res), 'downloaded docx is clean and complete');
 const outParas = +res.match(/paras (\d+)/)[1];
 check(outParas === paraCount, `paragraph count unchanged (${outParas} vs ${paraCount})`);
 

@@ -87,6 +87,27 @@ translation) and *Add to dictionary* (per browser). A Premium account or own
 server can be set in Settings. Proofing can be turned off; nothing else leaves
 the browser.
 
+## Context menu
+
+Right-click in either panel (`js/menu.js`; Shift+right-click gives the
+browser's own menu). Items register with a condition, so new actions are
+one `menu.add({...})` in `main.js`.
+
+- **Copy link** on a link in either panel. The address is read from the XML,
+  so it works for `w:hyperlink` (external or bookmark) and for `HYPERLINK`
+  fields, which are not rendered as links.
+- **Paste link** (also `Ctrl+K`) on selected text in the translation. Uses
+  the link Babel copied, or a web address copied elsewhere. The selection
+  becomes a real `w:hyperlink`, with a relationship added to the part's
+  `.rels` (journalled like a paragraph), and takes the copied link's character
+  style (`Hyperlink`, colour, underline). Pasting onto existing linked text
+  changes its address; a selection that straddles a link, field or tracked
+  change is refused. The paragraph is then laid out again on its own.
+- Cut / Copy / Paste as plain text, Mark as done, Revert, Copy the original.
+
+On export, a hyperlink whose relationship is missing is unwrapped (text kept)
+rather than produce a file Word rejects.
+
 ## Counts
 
 "Characters with spaces" follows Word: text of the body, footnotes and
@@ -106,6 +127,7 @@ bar shows the active paragraph.
 | `js/view.js` | rendering, pagination, overflow, zoom |
 | `js/store.js` | IndexedDB, snapshots, journal |
 | `js/proof.js` | LanguageTool client |
+| `js/menu.js` | context menu |
 | `js/langs.js` | target languages (Word code ↔ LanguageTool code) |
 | `vendor/docx-preview.mjs` | docx-preview 0.3.7 with `BABEL PATCH` changes |
 | `vendor/jszip.min.js` | JSZip 3.10.1 |

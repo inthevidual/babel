@@ -4,6 +4,7 @@ import * as V from './view.js';
 import * as E from './editor.js';
 import { Proofer } from './proof.js';
 import { LANGS, langByCode } from './langs.js';
+import { ContextMenu } from './menu.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -238,6 +239,10 @@ async function openProject(id) {
     issues: new Map(),
     confirmed: new Set(project.confirmed ?? []),
     ignored: new Set(project.ignored ?? []),
+    rels: {},                       // relationship parts of the target that Babel changed
+    srcRels: {},                    // text part path -> Map(id -> target) of the original
+    srcRelsXml: {},
+    styles: null,
     splits: [],
     readOnly: false,
     lastSnapshotAt: Date.now(),
@@ -249,9 +254,25 @@ async function openProject(id) {
     P.src[path] = X.parseXml(source.parts[path]);
     P.tgt[path] = X.parseXml(stored[path] ?? source.parts[path]);
   }
+  const zip = await JSZip.loadAsync(source.bytes);
+  for (const path of project.textParts) {
+    const rp = X.relsPathFor(path);
+    P.srcRelsXml[rp] = await zip.file(rp)?.async('string') ?? null;
+    P.srcRels[path] = X.relsMap(P.srcRelsXml[rp] ? X.parseXml(P.srcRelsXml[rp]) : null);
+    if (stored[rp]) P.rels[rp] = X.parseXml(stored[rp]);
+  }
+  const stylesPath = project.textParts[0].replace(/[^/]*$/, 'styles.xml');
+  const stylesXml = await zip.file(stylesPath)?.async('string');
+  P.styles = stylesXml ? X.parseXml(stylesXml) : null;
+
   const journal = S.journalRead(id);
   let replayed = 0;
   for (const [pid, e] of Object.entries(journal.entries)) {
+    if (pid.startsWith('rels|')) {
+      const rp = pid.slice(5);
+      try { P.rels[rp] = X.parseXml(e.xml); P.dirty.add(rp); } catch (err) { console.warn('journal entry skipped', pid, err); }
+      continue;
+    }
     const path = P.keyToPath[pid.split(':')[0]];
     const doc = P.tgt[path];
     const el = doc?.querySelector(`[data-bp="${CSS.escape(pid)}"]`);
@@ -310,9 +331,14 @@ function styleHolder(which) {
   return el;
 }
 
+// Every target part Babel owns, serialised: text parts and changed
+// relationship parts.
+const partPaths = () => [...P.project.textParts, ...Object.keys(P.rels)];
+const serializePart = path => X.serializeXml(P.tgt[path] ?? P.rels[path], P.source.parts[path] ?? P.srcRelsXml[path]);
+const allParts = () => Object.fromEntries(partPaths().map(p => [p, serializePart(p)]));
+
 async function renderTarget() {
-  const parts = {};
-  for (const path of P.project.textParts) parts[path] = X.serializeXml(P.tgt[path], P.source.parts[path]);
+  const parts = allParts();
   const bytes = await X.buildRenderable(P.source.bytes, parts);
   await V.render(bytes, tgtRoot, styleHolder('tgt'), 'btgt');
   V.replaySplits(tgtRoot, P.splits);
@@ -578,7 +604,7 @@ async function save() {
   const paths = [...P.dirty];
   P.dirty.clear();
   const parts = {};
-  for (const path of paths) parts[path] = X.serializeXml(P.tgt[path], P.source.parts[path]);
+  for (const path of paths) parts[path] = serializePart(path);
   P.project.updatedAt = Date.now();
   P.project.stats = totals();
   setSaveState('saving');
@@ -615,8 +641,7 @@ async function snapshot(reason) {
   if (!P) return;
   const session = P;
   flushAll();
-  const parts = {};
-  for (const path of P.project.textParts) parts[path] = X.serializeXml(P.tgt[path], P.source.parts[path]);
+  const parts = allParts();
   P.lastSnapshotAt = Date.now();
   P.changedSinceSnapshot = false;
   try { await S.addSnapshot(session.project.id, reason, parts, totals()); }
@@ -1078,29 +1103,253 @@ addEventListener('mousedown', e => {
 
 // ── Paragraph actions: revert ──────────────────────────────────────────────
 
-tgtRoot.addEventListener('contextmenu', e => {
-  const host = E.hostOf(e.target);
-  if (!host || !P || P.readOnly) return;
-  const pid = host.dataset.p;
-  const m = P.meta.get(pid);
-  if (!m) return;
-  e.preventDefault();
-  const menu = $('#issueMenu');
-  menu.innerHTML = `
-    <button class="menu-item" data-a="confirm"><span>${P.confirmed.has(pid) ? 'Unmark as done' : 'Mark as done'} <small class="muted">Ctrl+Enter</small></span></button>
-    <button class="menu-item" data-a="revert" ${m.edited ? '' : 'disabled'}><span>Revert paragraph to the original</span></button>
-    <button class="menu-item" data-a="copy"><span>Copy the original text</span></button>`;
-  menu.hidden = false;
-  menu.style.left = `${Math.min(innerWidth - menu.offsetWidth - 8, e.clientX)}px`;
-  menu.style.top = `${Math.min(innerHeight - menu.offsetHeight - 8, e.clientY)}px`;
-  menu.onclick = ev => {
-    const b = ev.target.closest('.menu-item');
-    if (!b || b.disabled) return;
-    menu.hidden = true;
-    if (b.dataset.a === 'confirm') editorCallbacks.confirm(host);
-    if (b.dataset.a === 'revert') revertParagraph(pid);
-    if (b.dataset.a === 'copy') navigator.clipboard?.writeText(m.srcText.replace(/\n/g, ' ')).then(() => toast('Original text copied.'));
+// ── Context menu ───────────────────────────────────────────────────────────
+// Right-click in either document. Shift+right-click gives the browser's own
+// menu. Items are registered below; add new ones the same way.
+
+const menu = new ContextMenu($('#ctxMenu'));
+let copiedLink = null; // {url} | {anchor}, plus style and the clipboard text
+
+function menuContext(e, panel) {
+  const root = panel === 'src' ? srcRoot : tgtRoot;
+  const sel = getSelection();
+  let range = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  if (range && (range.collapsed || !root.contains(range.commonAncestorContainer))) range = null;
+  const host = panel === 'tgt' ? E.hostOf(e.target) : e.target.closest?.('p[data-p]') ?? null;
+  return {
+    panel, host, range,
+    pid: host?.dataset.p ?? null,
+    text: range ? range.toString() : '',
+    link: linkAt(panel, e.target),
+    fail: err => toast(err.message || String(err), 'error'),
   };
+}
+
+for (const [root, panel] of [[srcRoot, 'src'], [tgtRoot, 'tgt']]) {
+  root.addEventListener('contextmenu', e => {
+    if (!P || e.shiftKey) return;
+    hideIssue();
+    const ctx = menuContext(e, panel);
+    if (menu.open(ctx, e.clientX, e.clientY)) e.preventDefault();
+  });
+}
+
+const editable = ctx => ctx.panel === 'tgt' && !!ctx.host && !P.readOnly;
+const linkLabel = l => l?.url ?? (l?.anchor ? `#${l.anchor}` : '');
+
+menu
+  // Clipboard
+  .add({ group: 'clip', label: 'Cut', hint: 'Ctrl+X', when: editable, enabled: ctx => !!ctx.range,
+    run: async ctx => { await writeClipboard(ctx.text); document.execCommand('delete'); } })
+  .add({ group: 'clip', label: 'Copy', hint: 'Ctrl+C', when: ctx => !!ctx.range || ctx.panel === 'tgt', enabled: ctx => !!ctx.range,
+    run: ctx => writeClipboard(ctx.text) })
+  .add({ group: 'clip', label: 'Paste as plain text', hint: 'Ctrl+V', when: editable,
+    run: async () => {
+      const t = await readClipboard();
+      if (t) document.execCommand('insertText', false, t.replace(/\r?\n+/g, ' ').replace(/\t/g, ' '));
+    } })
+  // Links
+  .add({ group: 'link', label: 'Copy link', sub: ctx => linkLabel(ctx.link), when: ctx => !!ctx.link,
+    run: ctx => copyLink(ctx) })
+  .add({ group: 'link', label: 'Paste link', hint: 'Ctrl+K', when: editable,
+    sub: ctx => (copiedLink ? linkLabel(copiedLink) : ''), enabled: ctx => !!ctx.range,
+    run: ctx => pasteLink(ctx) })
+  // Paragraph
+  .add({ group: 'para', label: ctx => (P.confirmed.has(ctx.pid) ? 'Unmark as done' : 'Mark as done'), hint: 'Ctrl+Enter',
+    when: ctx => editable(ctx) && P.meta.has(ctx.pid), run: ctx => editorCallbacks.confirm(ctx.host) })
+  .add({ group: 'para', label: 'Revert paragraph to the original',
+    when: ctx => editable(ctx) && P.meta.has(ctx.pid), enabled: ctx => !!P.meta.get(ctx.pid)?.edited,
+    run: ctx => revertParagraph(ctx.pid) })
+  .add({ group: 'para', label: ctx => (ctx.panel === 'src' ? 'Copy paragraph text' : 'Copy the original text'),
+    when: ctx => !!ctx.pid && P.meta.has(ctx.pid),
+    run: ctx => writeClipboard(P.meta.get(ctx.pid).srcText.replace(/\n/g, ' ')) });
+
+async function writeClipboard(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch { toast('The browser did not allow copying. Use Ctrl+C instead.', 'warn'); }
+}
+
+async function readClipboard() {
+  try { return await navigator.clipboard.readText(); }
+  catch { return null; }
+}
+
+// The link under an element, read from the XML (part-aware, and it also
+// finds HYPERLINK fields, which are not rendered as <a>).
+function linkAt(panel, el) {
+  const span = el?.closest?.('[data-r]') ?? el?.closest?.('a')?.querySelector('[data-r]');
+  if (!span) return null;
+  const rid = span.dataset.r;
+  const path = P.keyToPath[rid.split(':')[0]];
+  if (!path) return null;
+  const doc = panel === 'src' ? P.src[path] : P.tgt[path];
+  const run = doc.querySelector(`[data-br="${CSS.escape(rid)}"]`);
+  if (!run) return null;
+  const rels = panel === 'src' ? P.srcRels[path] : X.relsMap(targetRels(path, false) ?? (P.srcRelsXml[X.relsPathFor(path)] ? X.parseXml(P.srcRelsXml[X.relsPathFor(path)]) : null));
+  const link = X.linkOfRun(run, rels);
+  return link ? { ...link, style: X.linkStyleOf(run) } : null;
+}
+
+function copyLink(ctx) {
+  copiedLink = { ...ctx.link, clip: linkLabel(ctx.link) };
+  return writeClipboard(copiedLink.clip).then(() => toast(`Link copied: ${copiedLink.clip}`));
+}
+
+// The target's relationship part for a text part, created from the original
+// on first change.
+function targetRels(path, create = true) {
+  const rp = X.relsPathFor(path);
+  if (!P.rels[rp] && create) P.rels[rp] = P.srcRelsXml[rp] ? X.parseXml(P.srcRelsXml[rp]) : X.emptyRels();
+  return P.rels[rp] ?? null;
+}
+
+const URLISH = /^(https?:\/\/|mailto:|ftp:\/\/|www\.)\S+$/i;
+
+// Which link to paste: what Babel copied, unless the clipboard now holds a
+// different web address (copied from a browser, an e-mail…).
+async function linkToPaste() {
+  const clip = (await readClipboard())?.trim();
+  if (copiedLink && (!clip || clip === copiedLink.clip)) return copiedLink;
+  if (clip && URLISH.test(clip)) return { url: /^www\./i.test(clip) ? 'https://' + clip : clip, style: null };
+  if (clip && /^#\S+$/.test(clip)) return { anchor: clip.slice(1), style: null };
+  return copiedLink;
+}
+
+async function pasteLink(ctx) {
+  if (!ctx.range || !ctx.host || P.readOnly) return;
+  const link = await linkToPaste();
+  if (!link) {
+    toast('Nothing to paste: right-click a link in the original and choose Copy link, or copy a web address.', 'warn', 7000);
+    return;
+  }
+  const pid = ctx.pid;
+  flush(pid);
+  const frags = E.fragments(tgtRoot, pid, ctx.host);
+  if (E.hostOf(ctx.range.startContainer) !== ctx.host || E.hostOf(ctx.range.endContainer) !== ctx.host) {
+    toast('Select text inside one paragraph to make a link.', 'warn');
+    return;
+  }
+  const { text, segs } = E.readParagraph(frags);
+  const start = E.offsetOf(segs, text, ctx.range.startContainer, ctx.range.startOffset);
+  const end = E.offsetOf(segs, text, ctx.range.endContainer, ctx.range.endOffset);
+  const el = P.tgtEl.get(pid);
+  const m = P.meta.get(pid);
+  if (X.runOffsets(el).text !== text) {
+    toast('Babel could not match the selection to the document, so nothing was changed. Try again after a moment.', 'error');
+    return;
+  }
+  const before = el.cloneNode(true);
+  let target;
+  if (link.url) {
+    const rels = targetRels(m.path);
+    target = { relId: X.addLinkRel(rels, link.url) };
+  } else target = { anchor: link.anchor };
+  const style = link.style?.length ? link.style
+    : X.hasCharStyle(P.styles, 'Hyperlink') ? [{ name: 'rStyle', attrs: { val: 'Hyperlink' } }]
+      : [{ name: 'color', attrs: { val: '0563C1' } }, { name: 'u', attrs: { val: 'single' } }];
+  const problem = X.linkRange(el, start, end, target, style);
+  if (problem) {
+    el.replaceWith(before);
+    P.tgtEl.set(pid, before);
+    toast(problem, 'warn', 6000);
+    return;
+  }
+  if (link.url) {
+    const rp = X.relsPathFor(m.path);
+    P.dirty.add(rp);
+    S.journalWrite(P.project.id, 'rels|' + rp, serializePart(rp));
+  }
+  await paragraphChanged(pid);
+  toast(`Linked to ${linkLabel(link)}`, 'info', 8000, {
+    label: 'Undo',
+    run: async () => {
+      P.tgtEl.get(pid).replaceWith(before);
+      P.tgtEl.set(pid, before);
+      await paragraphChanged(pid);
+    },
+  });
+}
+
+// After the XML of a paragraph changed outside the editor: journal it, render
+// it afresh and bring the bookkeeping up to date.
+async function paragraphChanged(pid) {
+  const el = P.tgtEl.get(pid);
+  const m = P.meta.get(pid);
+  X.adoptRuns(el, X.partKey(m.path));
+  S.journalWrite(P.project.id, pid, new XMLSerializer().serializeToString(el));
+  P.dirty.add(m.path);
+  P.changedSinceSnapshot = true;
+  await rerenderParagraph(pid);
+  m.tgtText = X.paraText(el);
+  refreshMeta(pid, m);
+  P.issues.delete(pid);
+  paintHighlights();
+  if (m.edited) proofer.queue(pid, 300);
+  scheduleSave(200);
+  updateStatus();
+}
+
+// Renders one paragraph of the target on its own (a one-paragraph copy of
+// the document, laid out off screen) and swaps its runs into place.
+async function rerenderParagraph(pid) {
+  const el = P.tgtEl.get(pid);
+  const frags = $$(`p[data-p="${CSS.escape(pid)}"]`, tgtRoot);
+  const isBody = !frags[0]?.closest('header, footer');
+  if (!frags.length || (isBody && frags.length > 1)) {
+    // Split across pages: lay out the whole translation again.
+    const sc = $('#tgtScroll'); const top = sc.scrollTop;
+    await renderTarget();
+    checkOverflow();
+    sc.scrollTop = top;
+    return;
+  }
+  const mainPath = P.project.textParts[0];
+  const doc = P.tgt[mainPath].cloneNode(true);
+  const body = doc.getElementsByTagNameNS(X.W, 'body')[0];
+  const sect = [...body.children].filter(c => c.localName === 'sectPr').pop();
+  body.replaceChildren(doc.importNode(el, true), ...(sect ? [sect] : []));
+  const parts = { ...allParts(), [mainPath]: X.serializeXml(doc, P.source.parts[mainPath]) };
+  const bytes = await X.buildRenderable(P.source.bytes, parts);
+  const box = document.createElement('div');
+  box.className = 'b-offscreen';
+  const styles = document.createElement('div');
+  const body2 = document.createElement('div');
+  box.append(styles, body2);
+  document.body.appendChild(box);
+  try {
+    await V.render(bytes, body2, styles, 'btgt', { settle: false });
+    const fresh = body2.querySelector(`p[data-p="${CSS.escape(pid)}"]`);
+    if (!fresh) throw new Error('The paragraph could not be laid out.');
+    frags.forEach((f, i) => {
+      if (i === frags.length - 1) f.replaceChildren(...fresh.childNodes);
+      else f.innerHTML = fresh.innerHTML;
+      prepareFragment(f);
+      V.refreshTabs(f);
+    });
+  } finally {
+    box.remove();
+  }
+  for (const r of el.getElementsByTagNameNS(X.W, 'r')) P.templates.delete(r.getAttribute('data-br'));
+  P.info.set(pid, E.runInfo(E.fragments(tgtRoot, pid, frags[0])));
+  if (!isBody) V.numberPages(tgtRoot);
+  scheduleOverflow(frags);
+}
+
+function prepareFragment(f) {
+  for (const s of f.querySelectorAll('span[data-r]:not([data-k="t"])')) s.contentEditable = 'false';
+  for (const a of f.querySelectorAll('a[href]')) a.removeAttribute('href');
+}
+
+tgtRoot.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    const host = E.hostOf(e.target);
+    if (!host || !P || P.readOnly) return;
+    const sel = getSelection();
+    const range = sel.rangeCount && !sel.isCollapsed ? sel.getRangeAt(0).cloneRange() : null;
+    if (!range) { toast('Select the text to link first.', 'warn'); return; }
+    pasteLink({ panel: 'tgt', host, pid: host.dataset.p, range }).catch(err => toast(err.message, 'error'));
+  }
 });
 
 function revertParagraph(pid) {
@@ -1123,8 +1372,7 @@ function swapParagraph(pid, xmlEl, htmlList) {
   const frags = $$(`p[data-p="${CSS.escape(pid)}"]`, tgtRoot);
   frags.forEach((f, k) => {
     f.innerHTML = htmlList[Math.min(k, htmlList.length - 1)] ?? '';
-    for (const s of f.querySelectorAll('span[data-r]:not([data-k="t"])')) s.contentEditable = 'false';
-    for (const a of f.querySelectorAll('a[href]')) a.removeAttribute('href');
+    prepareFragment(f);
   });
   for (const r of copy.querySelectorAll('[data-br]')) P.templates.delete(r.getAttribute('data-br'));
   P.info.set(pid, E.runInfo(E.fragments(tgtRoot, pid, frags[0])));
@@ -1152,8 +1400,7 @@ $('#btnDownload').onclick = async () => {
   const btn = $('#btnDownload');
   btn.disabled = true;
   try {
-    const parts = {};
-    for (const path of P.project.textParts) parts[path] = X.serializeXml(P.tgt[path], P.source.parts[path]);
+    const parts = allParts();
     const blob = await X.buildDocx({ bytes: P.source.bytes, partXml: parts, lang: P.project.targetLang });
     saveBlob(blob, `${P.project.name}_${LANG_SUFFIX(P.project.targetLang)}.docx`);
     await save();
@@ -1166,8 +1413,8 @@ async function downloadProject(id, snapshotParts = null, suffix = '') {
   const project = await S.getProject(id);
   const source = await S.getSource(id);
   const stored = snapshotParts ?? await S.getParts(id);
-  const parts = {};
-  for (const path of project.textParts) parts[path] = stored[path] ?? source.parts[path];
+  const parts = { ...stored };
+  for (const path of project.textParts) parts[path] ??= source.parts[path];
   // Unsaved journal entries belong in the file too.
   if (!snapshotParts) {
     const j = S.journalRead(id);
@@ -1176,12 +1423,13 @@ async function downloadProject(id, snapshotParts = null, suffix = '') {
         const doc = X.parseXml(parts[path]);
         let touched = false;
         for (const [pid, e] of Object.entries(j.entries)) {
-          if (X.partKey(path) !== pid.split(':')[0]) continue;
+          if (pid.startsWith('rels|') || X.partKey(path) !== pid.split(':')[0]) continue;
           const el = doc.querySelector(`[data-bp="${CSS.escape(pid)}"]`);
           if (el) { el.replaceWith(doc.importNode(parseFragment(doc, e.xml), true)); touched = true; }
         }
         if (touched) parts[path] = X.serializeXml(doc, parts[path]);
       }
+      for (const [k, e] of Object.entries(j.entries)) if (k.startsWith('rels|')) parts[k.slice(5)] = e.xml;
     }
   }
   const blob = await X.buildDocx({ bytes: source.bytes, partXml: parts, lang: project.targetLang });

@@ -381,6 +381,15 @@ export function attach(root, cb) {
   }
 }
 
+// Offset of a DOM boundary point in a paragraph's text (see readParagraph).
+export function offsetOf(segs, text, node, offset) {
+  for (const s of segs) if (s.node === node) return s.start + offset;
+  const r = document.createRange();
+  r.setStart(node, offset);
+  for (const s of segs) if (r.comparePoint(s.node, 0) >= 0) return s.start;
+  return text.length;
+}
+
 // Ranges in the DOM for a [start, end) span of a paragraph's text.
 export function rangeFor(segs, start, end) {
   const locate = (off, preferEnd) => {

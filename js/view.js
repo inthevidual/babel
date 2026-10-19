@@ -2,7 +2,7 @@
 
 import { renderAsync, babelRefreshTab } from '../vendor/docx-preview.mjs';
 
-export async function render(bytes, bodyEl, styleEl, className) {
+export async function render(bytes, bodyEl, styleEl, className, { settle = true } = {}) {
   await renderAsync(bytes, bodyEl, styleEl, {
     className,
     inWrapper: true,
@@ -18,7 +18,7 @@ export async function render(bytes, bodyEl, styleEl, className) {
     useBase64URL: false,
   });
   // docx-preview computes tab widths half a second after rendering.
-  await new Promise(r => setTimeout(r, 600));
+  if (settle) await new Promise(r => setTimeout(r, 600));
   return pages(bodyEl);
 }
 
