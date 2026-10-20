@@ -103,6 +103,8 @@ one `menu.add({...})` in `main.js`.
   style (`Hyperlink`, colour, underline). Pasting onto existing linked text
   changes its address; a selection that straddles a link, field or tracked
   change is refused. The paragraph is then laid out again on its own.
+- **Look up in Merriam-Webster** on a selected term in the original (up to
+  six words; surrounding punctuation is trimmed). Opens the entry in a new tab.
 - Cut / Copy / Paste as plain text, Mark as done, Revert, Copy the original.
 
 On export, a hyperlink whose relationship is missing is unwrapped (text kept)

@@ -1148,6 +1148,10 @@ menu
       const t = await readClipboard();
       if (t) document.execCommand('insertText', false, t.replace(/\r?\n+/g, ' ').replace(/\t/g, ' '));
     } })
+  // Look-ups (source)
+  .add({ group: 'lookup', label: ctx => `Look up “${ellipsize(lookupTerm(ctx), 32)}” in Merriam-Webster`,
+    when: ctx => ctx.panel === 'src' && !!lookupTerm(ctx),
+    run: ctx => openLookup(`https://www.merriam-webster.com/dictionary/${encodeURIComponent(lookupTerm(ctx))}`) })
   // Links
   .add({ group: 'link', label: 'Copy link', sub: ctx => linkLabel(ctx.link), when: ctx => !!ctx.link,
     run: ctx => copyLink(ctx) })
@@ -1163,6 +1167,16 @@ menu
   .add({ group: 'para', label: ctx => (ctx.panel === 'src' ? 'Copy paragraph text' : 'Copy the original text'),
     when: ctx => !!ctx.pid && P.meta.has(ctx.pid),
     run: ctx => writeClipboard(P.meta.get(ctx.pid).srcText.replace(/\n/g, ' ')) });
+
+// The selected term, tidied: whitespace collapsed, surrounding punctuation
+// and quotes dropped. Nothing for long selections — a dictionary takes terms.
+function lookupTerm(ctx) {
+  const t = ctx.text.replace(/\s+/g, ' ').trim().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+  return t && t.length <= 80 && t.split(' ').length <= 6 ? t : '';
+}
+const ellipsize = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+const openLookup = url => window.open(url, '_blank', 'noopener');
 
 async function writeClipboard(text) {
   try { await navigator.clipboard.writeText(text); }

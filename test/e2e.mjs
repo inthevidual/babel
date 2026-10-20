@@ -173,6 +173,30 @@ const selectWord = (word, pidHint) => page.evaluate(([word]) => {
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check(clip === 'https://example.org/', `link on the clipboard (${clip})`);
 
+  // Look up a selected source term in Merriam-Webster.
+  await ctx.route('https://www.merriam-webster.com/**', r => r.fulfill({ body: 'mw', contentType: 'text/plain' }));
+  const term = await page.evaluate(() => {
+    const w = document.createTreeWalker(document.querySelector('#srcDoc'), NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      const i = n.data.indexOf('board of directors');
+      if (i < 0) continue;
+      const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 18);
+      getSelection().removeAllRanges(); getSelection().addRange(r);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+    }
+  });
+  await page.mouse.click(term.x, term.y, { button: 'right' });
+  const lookItems = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent.replace(/\s+/g, ' ').trim()));
+  check(lookItems.some(t => t === 'Look up “board of directors” in Merriam-Webster'), `source menu offers the look-up (${lookItems.join(' | ')})`);
+  const [popup] = await Promise.all([ctx.waitForEvent('page'), page.click('#ctxMenu .menu-item:has-text("Merriam-Webster")')]);
+  await popup.waitForURL(/merriam-webster/, { timeout: 10000 }).catch(() => {});
+  check(popup.url() === 'https://www.merriam-webster.com/dictionary/board%20of%20directors', `look-up opens ${popup.url()}`);
+  await popup.close();
+  await page.mouse.click(linkBox.x, linkBox.y, { button: 'right' });
+  const noSel = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent));
+  check(!noSel.some(t => t.includes('Merriam')), 'no look-up without a selection');
+  await page.keyboard.press('Escape');
+
   const w = await selectWord('budget');
   await page.mouse.click(w.x, w.y, { button: 'right' });
   const titems = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent.replace(/\s+/g, ' ').trim()));
