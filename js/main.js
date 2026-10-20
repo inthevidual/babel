@@ -723,9 +723,24 @@ function ensureVisible(el) {
   }
 }
 
-// Clicking a paragraph in the original jumps to its translation.
+// A plain click on a paragraph in the original jumps to its translation.
+// Moving focus there ends any selection in the original, so the jump waits
+// out a possible double or triple click, and doesn't happen at all when the
+// click finished a drag-selection or a word/paragraph selection.
+let srcJump = 0;
+const srcHasSelection = () => {
+  const s = getSelection();
+  return s.rangeCount > 0 && !s.isCollapsed && srcRoot.contains(s.getRangeAt(0).commonAncestorContainer);
+};
+srcRoot.addEventListener('mousedown', () => clearTimeout(srcJump));
 srcRoot.addEventListener('click', e => {
-  const p = e.target.closest('p[data-p]');
+  clearTimeout(srcJump);
+  if (e.detail !== 1 || e.button !== 0 || e.shiftKey || srcHasSelection()) return;
+  srcJump = setTimeout(() => { if (!srcHasSelection()) jumpToTranslation(e.target); }, 300);
+});
+
+function jumpToTranslation(el) {
+  const p = el.closest('p[data-p]');
   if (!p || !P) return;
   const pid = p.dataset.p;
   const frags = $$(`p[data-p="${CSS.escape(pid)}"]`, srcRoot);
@@ -738,7 +753,7 @@ srcRoot.addEventListener('click', e => {
   if (!target) return;
   E.placeCaret(target, 'start');
   ensureVisible(target);
-});
+}
 
 // ── Synchronised scrolling ─────────────────────────────────────────────────
 

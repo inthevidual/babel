@@ -173,18 +173,59 @@ const selectWord = (word, pidHint) => page.evaluate(([word]) => {
   const clip = await page.evaluate(() => navigator.clipboard.readText());
   check(clip === 'https://example.org/', `link on the clipboard (${clip})`);
 
+  // Selecting in the original: drag and double-click keep the selection,
+  // a plain click still jumps to the translation.
+  {
+    const box = await page.evaluate(() => {
+      const p = [...document.querySelectorAll('#srcDoc article p[data-p]')].find(p => p.textContent.includes('Printed'))
+        ?? document.querySelector('#srcDoc p[data-p="document:2"]');
+      p.scrollIntoView({ block: 'center' });
+      const r = p.getBoundingClientRect(); return { x: r.left, y: r.top + r.height / 2, w: r.width, pid: p.dataset.p };
+    });
+    await page.waitForTimeout(300);
+    await page.mouse.move(box.x + 2, box.y); await page.mouse.down();
+    await page.mouse.move(box.x + 60, box.y, { steps: 6 }); await page.mouse.up();
+    await page.waitForTimeout(500);
+    const dragSel = await page.evaluate(() => { const s = getSelection(); return { text: s.toString(), inSrc: !!s.anchorNode && document.querySelector('#srcDoc').contains(s.anchorNode) }; });
+    check(dragSel.text.length > 2 && dragSel.inSrc, `drag-select in the original keeps the selection ("${dragSel.text}")`);
+    await page.mouse.dblclick(box.x + 30, box.y);
+    await page.waitForTimeout(500);
+    const dbl = await page.evaluate(() => { const s = getSelection(); return { text: s.toString(), inSrc: !!s.anchorNode && document.querySelector('#srcDoc').contains(s.anchorNode) }; });
+    check(dbl.text.trim().length > 1 && dbl.inSrc, `double-click in the original selects a word ("${dbl.text}")`);
+    await page.mouse.click(box.x + 30, box.y);
+    await page.waitForTimeout(600);
+    const jumped = await page.evaluate(() => document.activeElement?.closest?.('#tgtDoc p[data-p]')?.dataset.p);
+    check(jumped === box.pid, `a plain click still jumps to the translation (${jumped})`);
+  }
+
   // Look up a selected source term in Merriam-Webster.
   await ctx.route('https://www.merriam-webster.com/**', r => r.fulfill({ body: 'mw', contentType: 'text/plain' }));
+  const findTerm = () => page.evaluate(() => {
+    const w = document.createTreeWalker(document.querySelector('#srcDoc'), NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      const i = n.data.indexOf('board of directors');
+      if (i < 0) continue;
+      n.parentElement.scrollIntoView({ block: 'center' });
+      const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 18);
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, l: b.left + 1, r: b.right - 1 };
+    }
+  });
+  await page.waitForTimeout(1200); // let the jump's smooth scroll (and the synced panel) settle
+  await findTerm();
+  await page.waitForTimeout(600);
   const term = await page.evaluate(() => {
     const w = document.createTreeWalker(document.querySelector('#srcDoc'), NodeFilter.SHOW_TEXT);
     for (let n; (n = w.nextNode());) {
       const i = n.data.indexOf('board of directors');
       if (i < 0) continue;
       const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 18);
-      getSelection().removeAllRanges(); getSelection().addRange(r);
-      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+      const b = r.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2, l: b.left + 1, r: b.right - 1 };
     }
   });
+  await page.waitForTimeout(300);
+  await page.mouse.move(term.l, term.y); await page.mouse.down();
+  await page.mouse.move(term.r, term.y, { steps: 6 }); await page.mouse.up();
+  await page.waitForTimeout(400);
   await page.mouse.click(term.x, term.y, { button: 'right' });
   const lookItems = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent.replace(/\s+/g, ' ').trim()));
   check(lookItems.some(t => t === 'Look up “board of directors” in Merriam-Webster'), `source menu offers the look-up (${lookItems.join(' | ')})`);
@@ -192,7 +233,9 @@ const selectWord = (word, pidHint) => page.evaluate(([word]) => {
   await popup.waitForURL(/merriam-webster/, { timeout: 10000 }).catch(() => {});
   check(popup.url() === 'https://www.merriam-webster.com/dictionary/board%20of%20directors', `look-up opens ${popup.url()}`);
   await popup.close();
-  await page.mouse.click(linkBox.x, linkBox.y, { button: 'right' });
+  const lb = await page.evaluate(() => { const a = document.querySelector('#srcDoc a'); a.scrollIntoView({ block: 'center' }); getSelection().removeAllRanges(); const b = a.getBoundingClientRect(); return { x: b.left + 5, y: b.top + b.height / 2 }; });
+  await page.waitForTimeout(300);
+  await page.mouse.click(lb.x, lb.y, { button: 'right' });
   const noSel = await page.$$eval('#ctxMenu:not([hidden]) .menu-item', bs => bs.map(b => b.textContent));
   check(!noSel.some(t => t.includes('Merriam')), 'no look-up without a selection');
   await page.keyboard.press('Escape');
