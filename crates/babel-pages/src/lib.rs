@@ -51,6 +51,15 @@ pub fn options() -> LayoutOptions {
     LayoutOptions { hide_deleted: true, ..Default::default() }
 }
 
+/// Drawn as Babel's editor shows a document: no revision colours, headers and
+/// footers at full strength.
+pub fn render_options() -> wordcraft_render::RenderOptions {
+    let mut o = wordcraft_render::RenderOptions::default();
+    o.display.markup = false;
+    o.display.dim_header = false;
+    o
+}
+
 /// Reads and lays out a renderable package.
 pub fn lay_out(docx: &[u8]) -> anyhow::Result<Laid> {
     let doc = wordcraft_docx::read(docx)?;
@@ -85,7 +94,7 @@ impl Laid {
 
     /// Page `i` as straight-alpha RGBA, `scale` pixels per point.
     pub fn render(&self, i: usize, scale: f32) -> (u32, u32, Vec<u8>) {
-        let r = wordcraft_render::render_page(&self.doc, &self.layout.pages[i], scale, &Default::default());
+        let r = wordcraft_render::render_page(&self.doc, &self.layout.pages[i], scale, &render_options());
         (r.width, r.height, r.to_straight())
     }
 }

@@ -3,6 +3,7 @@
 
 mod app;
 mod bridge;
+mod pages;
 mod sync;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};

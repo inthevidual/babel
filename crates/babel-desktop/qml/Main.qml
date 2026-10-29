@@ -23,9 +23,26 @@ Kirigami.ApplicationWindow {
         showEditor();
     }
 
+    function inStack(item) {
+        for (let i = 0; i < pageStack.depth; i++)
+            if (pageStack.get(i) === item)
+                return true;
+        return false;
+    }
+
     function showEditor() {
-        if (pageStack.currentItem !== editor)
+        if (!inStack(editor))
             pageStack.push(editor);
+    }
+
+    // The editor closes its translation when it leaves the stack, not when
+    // a page (the native view) is put on top of it.
+    Connections {
+        target: root.pageStack
+        function onCurrentItemChanged() {
+            if (!root.inStack(editor))
+                editor.closeProject();
+        }
     }
 
     function showProjects() {
@@ -56,6 +73,15 @@ Kirigami.ApplicationWindow {
         visible: false
         onClosed: root.showProjects()
         onOpened: root.showEditor()
+        onNativeRequested: (id, name) => {
+            nativeView.load(id, name);
+            pageStack.push(nativeView);
+        }
+    }
+
+    NativePage {
+        id: nativeView
+        visible: false
     }
 
     AccountDialog {
@@ -74,11 +100,17 @@ Kirigami.ApplicationWindow {
         onActivated: openDialog.open()
     }
 
-    // babel-desktop [FILE.docx | --project=ID]: open a document (from the
-    // file manager), or a translation by its id.
+    // babel-desktop [FILE.docx | --project=ID [--native]]: open a document
+    // (from the file manager), or a translation by its id, optionally in the
+    // native layout view.
     Component.onCompleted: {
-        for (const arg of Qt.application.arguments.slice(1)) {
-            if (arg.startsWith("--project="))
+        const args = Qt.application.arguments.slice(1);
+        for (const arg of args) {
+            if (arg.startsWith("--project=") && args.includes("--native")) {
+                root.openProject(arg.slice(10));
+                nativeView.load(arg.slice(10), "");
+                pageStack.push(nativeView);
+            } else if (arg.startsWith("--project="))
                 root.openProject(arg.slice(10));
             else if (arg.toLowerCase().endsWith(".docx"))
                 root.importFile(arg.startsWith("file:") ? arg : "file://" + arg);

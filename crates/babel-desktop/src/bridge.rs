@@ -45,6 +45,16 @@ pub mod qobject {
         #[cxx_name = "stageFile"]
         fn stage_file(self: Pin<&mut Backend>, url: &QUrl) -> QString;
 
+        /// Lays out both documents natively; answers with pagesReady.
+        #[qinvokable]
+        #[cxx_name = "renderPages"]
+        fn render_pages(self: Pin<&mut Backend>, id: &QString);
+
+        /// JSON: {source: [{url, w, h}], target: [...], ms}.
+        #[qsignal]
+        #[cxx_name = "pagesReady"]
+        fn pages_ready(self: Pin<&mut Backend>, id: QString, pages: QString);
+
         #[qinvokable]
         #[cxx_name = "deleteProject"]
         fn delete_project(self: Pin<&mut Backend>, id: &QString);
@@ -171,6 +181,18 @@ impl qobject::Backend {
                 QString::default()
             }
         }
+    }
+
+    fn render_pages(self: Pin<&mut Self>, id: &QString) {
+        let qt = self.qt_thread();
+        let id = id.to_string();
+        app().rt.spawn_blocking(move || {
+            let res = crate::pages::render(&id);
+            let _ = qt.queue(move |o| match res {
+                Ok(r) => o.pages_ready(QString::from(&id), QString::from(&serde_json::to_string(&r).unwrap_or_default())),
+                Err(e) => o.message(QString::from(&format!("The native layout failed: {e}")), true),
+            });
+        });
     }
 
     fn delete_project(self: Pin<&mut Self>, id: &QString) {

@@ -46,4 +46,7 @@ package() {
   install -Dm644 packaging/se.cptjanst.babel.desktop "$pkgdir/usr/share/applications/se.cptjanst.babel.desktop"
   install -Dm644 packaging/se.cptjanst.babel.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/se.cptjanst.babel.svg"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  # Native layout uses WordCraft (MIT or Apache-2.0); its notices ship with the binary.
+  install -d "$pkgdir/usr/share/licenses/$pkgname"
+  cp -r packaging/notices/. "$pkgdir/usr/share/licenses/$pkgname/"
 }

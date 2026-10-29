@@ -6,6 +6,7 @@ fn main() {
         "qml/ProjectsPage.qml",
         "qml/EditorPage.qml",
         "qml/AccountDialog.qml",
+        "qml/NativePage.qml",
     ]))
     .files(["src/bridge.rs"])
     .qt_module("Gui")

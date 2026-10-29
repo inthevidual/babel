@@ -12,17 +12,39 @@ Kirigami.Page {
     id: page
 
     property string projectName: ""
+    property string projectId: ""
     property var queue: []
     property bool ready: false
 
     signal closed()
     signal opened()
+    signal nativeRequested(string id, string name)
+
+    actions: [
+        Kirigami.Action {
+            text: "Native Layout"
+            icon.name: "view-preview"
+            tooltip: "The original and the translation as Babel's own layout engine lays them out (a preview, read-only)"
+            enabled: page.projectId !== ""
+            // Save what was typed first: the native view reads what is stored.
+            onTriggered: viewLoader.item.runJavaScript("__babel.flushAll(); __babel.save(); true", () => saveWait.start())
+        }
+    ]
+
+    Timer {
+        id: saveWait
+        interval: 400
+        onTriggered: page.nativeRequested(page.projectId, page.projectName)
+    }
 
     title: projectName
     padding: 0
 
     // Back to the list: close the translation (it saves on closing).
-    onIsCurrentPageChanged: if (!isCurrentPage && ready) run("if (location.hash.startsWith('#p=')) location.hash = ''")
+    function closeProject() {
+        if (ready)
+            run("if (location.hash.startsWith('#p=')) location.hash = ''");
+    }
 
     function run(js) {
         if (ready)
@@ -84,6 +106,7 @@ Kirigami.Page {
                 if (!page.ready)
                     return; // still loading; queued commands decide what it shows
                 const hash = url.toString().split("#")[1] || "";
+                page.projectId = hash.startsWith("p=") ? hash.slice(2) : "";
                 if (hash.startsWith("p="))
                     page.opened();
                 else if (hash !== "importing")
