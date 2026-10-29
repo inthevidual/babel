@@ -307,8 +307,11 @@ name = "babel-pages"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "babel-docx",
  "image",
  "quick-xml 0.42.0",
+ "serde_json",
+ "thiserror 2.0.21",
  "wordcraft-doc",
  "wordcraft-docx",
  "wordcraft-layout",
@@ -3745,7 +3748,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 [[package]]
 name = "wordcraft-doc"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "base64",
  "log",
@@ -3759,7 +3762,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-docx"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "aes",
  "base64",
@@ -3782,7 +3785,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-fonts"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "brotli-decompressor 5.0.3",
  "harfrust",
@@ -3797,7 +3800,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-geom"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "image",
  "serde",
@@ -3806,7 +3809,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-layout"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "image",
  "js-sys",
@@ -3827,7 +3830,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-metafile"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "kurbo",
  "thiserror 2.0.21",
@@ -3836,7 +3839,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-proof"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "log",
  "miniz_oxide 0.9.1",
@@ -3846,7 +3849,7 @@ dependencies = [
 [[package]]
 name = "wordcraft-render"
 version = "0.12.0"
-source = "git+https://github.com/inthevidual/wordcraft?rev=abd44c602429a08cf34960d88b317156c226f284#abd44c602429a08cf34960d88b317156c226f284"
+source = "git+https://github.com/inthevidual/wordcraft?rev=edcff3ebc647ff62251f24e278747d9f139cc139#edcff3ebc647ff62251f24e278747d9f139cc139"
 dependencies = [
  "image",
  "log",

@@ -2,6 +2,7 @@
 //! in Rust. The original package stays the source of truth; an edit rewrites
 //! the text of runs inside one `w:p` and nothing else.
 
+pub mod para;
 pub mod tree;
 pub mod writeback;
 

@@ -233,7 +233,7 @@ pub fn apply_paragraph(xml: &str, tokens: &[Token], info: &mut Info, templates: 
     let mut groups: HashMap<String, Group> = HashMap::new();
     let mut key = "^".to_owned();
     let mut present_atoms: HashSet<String> = HashSet::new();
-    let mut group = |k: &str, base: Option<String>, order: &mut Vec<String>, groups: &mut HashMap<String, Group>| {
+    let group = |k: &str, base: Option<String>, order: &mut Vec<String>, groups: &mut HashMap<String, Group>| {
         if !groups.contains_key(k) {
             order.push(k.to_owned());
             groups.insert(k.to_owned(), Group { segs: vec![], base });

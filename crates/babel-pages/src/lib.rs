@@ -9,6 +9,8 @@
 //! replaced by Babel's normalised ones (every `w:p` carries `data-bp`). The
 //! original file itself is never laid out or written by this crate.
 
+pub mod edit;
+
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Write};
 
