@@ -83,6 +83,20 @@ the source of truth, and an edit rewrites the text of runs inside it.
 - Zoom is a `transform: scale` on a sized wrapper, so layout measurements
   (`offsetHeight`) stay in document pixels.
 
+## Native layout and editing (desktop, in progress)
+
+`crates/babel-pages` lays documents out with WordCraft's engine (the
+`inthevidual/wordcraft` fork, whose .docx reader keeps each paragraph's
+`data-bp` and each run's `data-br`), and `crates/babel-docx` is the Rust
+port of the write-back (`applyParagraph`), checked against the JavaScript on
+2,254 generated cases (`tests/parity.rs`). In the desktop app, **Native
+Layout** on the editor page shows both documents laid out natively; the
+translation can be edited there: click for the caret, type, Backspace and
+Delete, arrows, Home/End, Enter for the next paragraph. Edits are written
+into the same XML the web editor writes and saved a second after typing
+stops. Not yet: selection, copy and paste, undo, formatting keys, Shift+Enter,
+input methods beyond plain key text, proofing.
+
 ## Recoverability
 
 Three layers, so no keystroke depends on one mechanism:

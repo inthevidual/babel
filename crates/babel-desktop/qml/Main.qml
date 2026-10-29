@@ -42,6 +42,8 @@ Kirigami.ApplicationWindow {
         function onCurrentItemChanged() {
             if (!root.inStack(editor))
                 editor.closeProject();
+            if (!root.inStack(nativeView))
+                nativeView.close();
         }
     }
 
@@ -110,6 +112,10 @@ Kirigami.ApplicationWindow {
                 root.openProject(arg.slice(10));
                 nativeView.load(arg.slice(10), "");
                 pageStack.push(nativeView);
+                // Test hook: type into the native editor without a keyboard.
+                const typed = args.find(a => a.startsWith("--native-type="));
+                if (typed)
+                    nativeView.typeTest(typed.slice(14));
             } else if (arg.startsWith("--project="))
                 root.openProject(arg.slice(10));
             else if (arg.toLowerCase().endsWith(".docx"))

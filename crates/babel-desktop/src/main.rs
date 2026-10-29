@@ -3,6 +3,7 @@
 
 mod app;
 mod bridge;
+mod native;
 mod pages;
 mod sync;
 

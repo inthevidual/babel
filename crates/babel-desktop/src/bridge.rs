@@ -50,6 +50,31 @@ pub mod qobject {
         #[cxx_name = "renderPages"]
         fn render_pages(self: Pin<&mut Backend>, id: &QString);
 
+        /// Opens the translation for editing on native pages: {pages: [{index, url, w, h}]}.
+        #[qinvokable]
+        #[cxx_name = "nativeOpen"]
+        fn native_open(self: Pin<&mut Backend>, id: &QString) -> QString;
+
+        /// Saves and closes the native editing session.
+        #[qinvokable]
+        #[cxx_name = "nativeClose"]
+        fn native_close(self: Pin<&mut Backend>);
+
+        /// Places the caret at a point (points) on a page: {caret}.
+        #[qinvokable]
+        #[cxx_name = "nativeClick"]
+        fn native_click(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        /// A key (Qt key code, and its text): {caret, pages, all, error}.
+        #[qinvokable]
+        #[cxx_name = "nativeKey"]
+        fn native_key(self: Pin<&mut Backend>, key: i32, text: &QString) -> QString;
+
+        /// Saves native edits if there are any.
+        #[qinvokable]
+        #[cxx_name = "nativeSave"]
+        fn native_save(self: Pin<&mut Backend>);
+
         /// JSON: {source: [{url, w, h}], target: [...], ms}.
         #[qsignal]
         #[cxx_name = "pagesReady"]
@@ -193,6 +218,53 @@ impl qobject::Backend {
                 Err(e) => o.message(QString::from(&format!("The native layout failed: {e}")), true),
             });
         });
+    }
+
+    fn native_open(self: Pin<&mut Self>, id: &QString) -> QString {
+        match crate::native::open(&id.to_string()) {
+            Ok(v) => QString::from(&v.to_string()),
+            Err(e) => {
+                self.message(QString::from(&format!("Could not open the translation for editing: {e}")), true);
+                QString::from("null")
+            }
+        }
+    }
+
+    fn native_close(self: Pin<&mut Self>) {
+        crate::native::close();
+    }
+
+    fn native_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        QString::from(&crate::native::click(page.max(0) as usize, x as f32, y as f32).to_string())
+    }
+
+    fn native_key(self: Pin<&mut Self>, key: i32, text: &QString) -> QString {
+        use crate::native::Key;
+        let k = match key {
+            0x0100_0012 => Key::Left,
+            0x0100_0014 => Key::Right,
+            0x0100_0013 => Key::Up,
+            0x0100_0015 => Key::Down,
+            0x0100_0010 => Key::Home,
+            0x0100_0011 => Key::End,
+            0x0100_0003 => Key::Backspace,
+            0x0100_0007 => Key::Delete,
+            0x0100_0004 | 0x0100_0005 => Key::Enter,
+            _ => {
+                let t = text.to_string();
+                if t.is_empty() || t.chars().any(|c| c.is_control()) {
+                    return QString::from("null");
+                }
+                Key::Text(t)
+            }
+        };
+        QString::from(&crate::native::key(k).to_string())
+    }
+
+    fn native_save(self: Pin<&mut Self>) {
+        if let Err(e) = crate::native::save() {
+            self.message(QString::from(&format!("Could not save: {e}")), true);
+        }
     }
 
     fn delete_project(self: Pin<&mut Self>, id: &QString) {

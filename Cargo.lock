@@ -290,6 +290,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wordcraft-doc",
 ]
 
 [[package]]
