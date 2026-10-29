@@ -4,6 +4,7 @@
 mod app;
 mod bridge;
 mod native;
+mod proof;
 mod pages;
 mod sync;
 

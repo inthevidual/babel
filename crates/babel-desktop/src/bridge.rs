@@ -20,6 +20,8 @@ pub mod qobject {
         include!("cxx-qt-lib/qqmlapplicationengine.h");
         type QQmlApplicationEngine = cxx_qt_lib::QQmlApplicationEngine;
         fn babel_exit_on_load_failure(engine: Pin<&mut QQmlApplicationEngine>);
+        fn babel_clipboard_set(text: &QString);
+        fn babel_clipboard_text() -> QString;
     }
 
     extern "RustQt" {
@@ -60,15 +62,65 @@ pub mod qobject {
         #[cxx_name = "nativeClose"]
         fn native_close(self: Pin<&mut Backend>);
 
-        /// Places the caret at a point (points) on a page: {caret}.
+        /// Places the caret at a point (points) on a page; `extend` keeps the
+        /// selection's other end (Shift-click, dragging).
         #[qinvokable]
         #[cxx_name = "nativeClick"]
-        fn native_click(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+        fn native_click(self: Pin<&mut Backend>, page: i32, x: f64, y: f64, extend: bool) -> QString;
 
-        /// A key (Qt key code, and its text): {caret, pages, all, error}.
+        /// Double-click: selects the word.
+        #[qinvokable]
+        #[cxx_name = "nativeWord"]
+        fn native_word(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        /// A key (Qt key code, its text, Qt modifier flags): {caret, selection, pages, all, error, …}.
         #[qinvokable]
         #[cxx_name = "nativeKey"]
-        fn native_key(self: Pin<&mut Backend>, key: i32, text: &QString) -> QString;
+        fn native_key(self: Pin<&mut Backend>, key: i32, text: &QString, modifiers: i32) -> QString;
+
+        /// Text from an input method, committed.
+        #[qinvokable]
+        #[cxx_name = "nativeText"]
+        fn native_text(self: Pin<&mut Backend>, text: &QString) -> QString;
+
+        /// Copies the selection to the clipboard; with `cut` deletes it too.
+        #[qinvokable]
+        #[cxx_name = "nativeCopy"]
+        fn native_copy(self: Pin<&mut Backend>, cut: bool) -> QString;
+
+        /// Pastes the clipboard's text.
+        #[qinvokable]
+        #[cxx_name = "nativePaste"]
+        fn native_paste(self: Pin<&mut Backend>) -> QString;
+
+        /// Proofing underlines: {underlines: [{page, x, y, w, kind}], count, status}.
+        #[qinvokable]
+        #[cxx_name = "nativeIssues"]
+        fn native_issues(self: Pin<&mut Backend>) -> QString;
+
+        /// Puts suggestion `value` in place of issue `n` of paragraph `pid`.
+        #[qinvokable]
+        #[cxx_name = "nativeApply"]
+        fn native_apply(self: Pin<&mut Backend>, pid: &QString, n: i32, value: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "nativeIgnore"]
+        fn native_ignore(self: Pin<&mut Backend>, pid: &QString, n: i32);
+
+        /// Opens the stored state again after edits from elsewhere; "null" if unchanged.
+        #[qinvokable]
+        #[cxx_name = "nativeReload"]
+        fn native_reload(self: Pin<&mut Backend>, id: &QString) -> QString;
+
+        /// New proofing results are in.
+        #[qsignal]
+        #[cxx_name = "nativeIssuesChanged"]
+        fn native_issues_changed(self: Pin<&mut Backend>);
+
+        /// The translation being edited natively was saved from elsewhere (sync, the web editor).
+        #[qsignal]
+        #[cxx_name = "nativeExternalChange"]
+        fn native_external_change(self: Pin<&mut Backend>, id: QString);
 
         /// Saves native edits if there are any.
         #[qinvokable]
@@ -130,8 +182,18 @@ pub struct BackendRust {
     syncing: bool,
 }
 
+static QT: std::sync::OnceLock<cxx_qt::CxxQtThread<qobject::Backend>> = std::sync::OnceLock::new();
+
+/// Tells QML that new proofing results are in (from any thread).
+pub fn notify_issues() {
+    if let Some(qt) = QT.get() {
+        let _ = qt.queue(|o| o.native_issues_changed());
+    }
+}
+
 impl cxx_qt::Initialize for qobject::Backend {
     fn initialize(mut self: Pin<&mut Self>) {
+        let _ = QT.set(self.qt_thread());
         let a = app();
         self.as_mut().set_editor_url(QString::from(&a.editor_url()));
         self.as_mut().set_origin(QString::from(&a.base));
@@ -145,6 +207,11 @@ impl cxx_qt::Initialize for qobject::Backend {
             loop {
                 match changes.recv().await {
                     Ok(c) if c.user != uid => continue,
+                    // The translation being edited natively, saved from elsewhere.
+                    Ok(c) if c.origin.as_deref() != Some("native") && crate::native::current().as_deref() == Some(c.project.as_str()) => {
+                        let id = QString::from(&c.project);
+                        let _ = qt.queue(move |o| o.native_external_change(id));
+                    }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     _ => {}
                 }
@@ -234,31 +301,94 @@ impl qobject::Backend {
         crate::native::close();
     }
 
-    fn native_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
-        QString::from(&crate::native::click(page.max(0) as usize, x as f32, y as f32).to_string())
+    fn native_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64, extend: bool) -> QString {
+        QString::from(&crate::native::click(page.max(0) as usize, x as f32, y as f32, extend).to_string())
     }
 
-    fn native_key(self: Pin<&mut Self>, key: i32, text: &QString) -> QString {
+    fn native_word(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        QString::from(&crate::native::select_word(page.max(0) as usize, x as f32, y as f32).to_string())
+    }
+
+    fn native_key(self: Pin<&mut Self>, key: i32, text: &QString, modifiers: i32) -> QString {
         use crate::native::Key;
-        let k = match key {
-            0x0100_0012 => Key::Left,
-            0x0100_0014 => Key::Right,
-            0x0100_0013 => Key::Up,
-            0x0100_0015 => Key::Down,
-            0x0100_0010 => Key::Home,
-            0x0100_0011 => Key::End,
-            0x0100_0003 => Key::Backspace,
-            0x0100_0007 => Key::Delete,
-            0x0100_0004 | 0x0100_0005 => Key::Enter,
+        use babel_pages::edit::Style;
+        const SHIFT: i32 = 0x0200_0000;
+        const CTRL: i32 = 0x0400_0000;
+        let (shift, ctrl) = (modifiers & SHIFT != 0, modifiers & CTRL != 0);
+        let k = match (key, ctrl) {
+            (0x5A, true) if shift => Key::Redo,
+            (0x5A, true) => Key::Undo,
+            (0x59, true) => Key::Redo,
+            (0x42, true) => Key::Toggle(Style::Bold),
+            (0x49, true) => Key::Toggle(Style::Italic),
+            (0x55, true) => Key::Toggle(Style::Underline),
+            (0x41, true) => Key::SelectAll,
+            (_, true) => return QString::from("null"),
+            (0x0100_0012, _) => Key::Left,
+            (0x0100_0014, _) => Key::Right,
+            (0x0100_0013, _) => Key::Up,
+            (0x0100_0015, _) => Key::Down,
+            (0x0100_0010, _) => Key::Home,
+            (0x0100_0011, _) => Key::End,
+            (0x0100_0003, _) => Key::Backspace,
+            (0x0100_0007, _) => Key::Delete,
+            (0x0100_0004 | 0x0100_0005, _) if shift => Key::LineBreak,
+            (0x0100_0004 | 0x0100_0005, _) => Key::Enter,
             _ => {
                 let t = text.to_string();
-                if t.is_empty() || t.chars().any(|c| c.is_control()) {
+                if t.is_empty() || t.chars().any(|c| c.is_control() && c != '\t') {
                     return QString::from("null");
                 }
                 Key::Text(t)
             }
         };
-        QString::from(&crate::native::key(k).to_string())
+        QString::from(&crate::native::key(k, shift).to_string())
+    }
+
+    fn native_text(self: Pin<&mut Self>, text: &QString) -> QString {
+        let t = text.to_string();
+        if t.is_empty() {
+            return QString::from("null");
+        }
+        QString::from(&crate::native::key(crate::native::Key::Text(t), false).to_string())
+    }
+
+    fn native_copy(self: Pin<&mut Self>, cut: bool) -> QString {
+        let text = crate::native::selected_text();
+        if text.is_empty() {
+            return QString::from("null");
+        }
+        qobject::babel_clipboard_set(&QString::from(&text));
+        if !cut {
+            return QString::from("null");
+        }
+        QString::from(&crate::native::key(crate::native::Key::Delete, false).to_string())
+    }
+
+    fn native_paste(self: Pin<&mut Self>) -> QString {
+        let t = qobject::babel_clipboard_text().to_string();
+        if t.is_empty() {
+            return QString::from("null");
+        }
+        QString::from(&crate::native::key(crate::native::Key::Text(t), false).to_string())
+    }
+
+    fn native_issues(self: Pin<&mut Self>) -> QString {
+        QString::from(&crate::native::issues().to_string())
+    }
+
+    fn native_apply(self: Pin<&mut Self>, pid: &QString, n: i32, value: &QString) -> QString {
+        QString::from(&crate::native::apply_suggestion(&pid.to_string(), n.max(0) as usize, &value.to_string()).to_string())
+    }
+
+    fn native_ignore(self: Pin<&mut Self>, pid: &QString, n: i32) {
+        if let Err(e) = crate::native::ignore(&pid.to_string(), n.max(0) as usize) {
+            self.message(QString::from(&format!("Could not save that: {e}")), true);
+        }
+    }
+
+    fn native_reload(self: Pin<&mut Self>, id: &QString) -> QString {
+        QString::from(&crate::native::reload(&id.to_string()).to_string())
     }
 
     fn native_save(self: Pin<&mut Self>) {

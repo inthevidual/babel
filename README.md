@@ -90,12 +90,30 @@ the source of truth, and an edit rewrites the text of runs inside it.
 `data-bp` and each run's `data-br`), and `crates/babel-docx` is the Rust
 port of the write-back (`applyParagraph`), checked against the JavaScript on
 2,254 generated cases (`tests/parity.rs`). In the desktop app, **Native
-Layout** on the editor page shows both documents laid out natively; the
-translation can be edited there: click for the caret, type, Backspace and
-Delete, arrows, Home/End, Enter for the next paragraph. Edits are written
-into the same XML the web editor writes and saved a second after typing
-stops. Not yet: selection, copy and paste, undo, formatting keys, Shift+Enter,
-input methods beyond plain key text, proofing.
+Layout** on the editor page shows both documents laid out natively, and the
+translation is edited there:
+
+- click for the caret, drag, Shift+click or Shift+arrows/Home/End to select,
+  double-click for a word, Ctrl+A for the paragraph (a selection stays within
+  one paragraph, as in the web editor);
+- type (dead keys, compose and input methods go through a hidden text input
+  at the caret, with the text being composed shown there), Backspace/Delete,
+  Shift+Enter for a line break, Enter to go to the next paragraph;
+- Ctrl+B/I/U on a selection, written as the web editor writes them;
+- Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z: undo puts the paragraph's XML back exactly,
+  typing is one step;
+- Ctrl+C/X/V (plain text; newlines paste as line breaks), right-click menu;
+- spelling and grammar with LanguageTool for the paragraphs that differ from
+  the original, underlined; a click on an underline offers its suggestions
+  and Ignore (shared with the web editor through the project);
+- saved a second after typing stops; saves from elsewhere (sync, the web
+  editor) appear at once when nothing here is unsaved, and are merged
+  otherwise.
+
+What the native editor doesn't do yet that the web one does: pasting links
+(Ctrl+K), Mark as done, Revert paragraph, the source panel's look-up and
+link menus, and the LanguageTool account, picky mode and personal dictionary
+from the web editor's settings (the desktop uses the free API with defaults).
 
 ## Recoverability
 
