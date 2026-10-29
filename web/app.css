@@ -308,3 +308,27 @@ kbd { font: 600 11px/1 ui-monospace, monospace; border: 1px solid var(--line); b
   .bar-doc .doc-name, .zoom, #btnVersions, #btnSettings { display: none; }
   .status span:not(.tag):not(:nth-child(2)) { display: none; }
 }
+
+/* ── The editor in WebAssembly (js/wasm-view.js) ─────────────────────────── */
+.doc.w-doc { padding: 24px 24px 1px; }
+.w-doc .w-page { position: relative; background: #fff; margin: 0 0 24px; box-shadow: var(--shadow); user-select: none; -webkit-user-select: none; cursor: text; }
+.w-canvas { position: absolute; inset: 0; display: block; }
+.w-over { position: absolute; inset: 0; pointer-events: none; }
+.w-over i { position: absolute; display: block; }
+.w-sel { background: var(--accent); opacity: .28; }
+#srcDoc .w-sel { opacity: .22; }
+.w-caret { width: 2px; background: #111; animation: w-blink 1.06s steps(1) infinite; }
+.w-caret.fixed { background: var(--muted); }
+#tgtDoc.w-blur .w-caret { animation: none; opacity: .35; }
+@keyframes w-blink { 50% { opacity: 0; } }
+.w-und { height: 2px; border-radius: 1px; opacity: .85; }
+.w-und.spelling { background: var(--spell); }
+.w-und.grammar, .w-und.typography { background: var(--grammar); }
+.w-und.style { background: var(--style); }
+.w-mark { width: 3px; border-radius: 2px; opacity: .8; }
+.w-mark.edited { background: var(--edited); }
+.w-mark.done { background: var(--done); }
+.w-input { position: fixed; width: 2px; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; z-index: 5; caret-color: transparent; background: transparent; color: transparent; }
+.w-preedit { position: fixed; z-index: 6; background: var(--raised); color: var(--fg); text-decoration: underline; padding: 0 1px; pointer-events: none; white-space: pre; }
+.pop-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.pop-acts { display: flex; gap: 6px; }

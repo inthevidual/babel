@@ -22,6 +22,7 @@ const errors = [];
 
 async function device(name) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await ctx.addInitScript(() => { try { localStorage.setItem('babel.settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('babel.settings') ?? '{}'), engine: 'classic' })); } catch {} });
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
   await page.goto(BASE);

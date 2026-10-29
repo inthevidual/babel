@@ -158,7 +158,8 @@ pub struct Editor {
     src_caret: Option<Pos>,
     src_anchor: Option<Pos>,
     pub proof: Proofing,
-    last_edit: Instant,
+    /// When the translation was last edited (None: not in this session).
+    last_edit: Option<Instant>,
     redraw: BTreeSet<usize>,
     redraw_all: bool,
     src_redraw: bool,
@@ -166,6 +167,8 @@ pub struct Editor {
     /// Project metadata changed (done marks, ignored issues): to save.
     pub meta_dirty: bool,
     copied: Option<Copied>,
+    /// Paragraphs and relationship parts changed since [`Editor::take_journal`].
+    journal: BTreeSet<String>,
     /// The link under the last right-click on the original.
     copied_candidate: Option<Copied>,
     styles_xml: Option<String>,
@@ -238,13 +241,14 @@ impl Editor {
             src_caret: None,
             src_anchor: None,
             proof,
-            last_edit: Instant::now() - PROOF_DELAY,
+            last_edit: None,
             redraw: BTreeSet::new(),
             redraw_all: true,
             src_redraw: true,
             confirmed,
             meta_dirty: false,
             copied: None,
+            journal: BTreeSet::new(),
             copied_candidate: None,
             styles_xml,
         })
@@ -439,6 +443,16 @@ impl Editor {
         }
     }
 
+    /// Caret geometry of a position (paragraph id, byte offset): for jumping
+    /// to a paragraph, and for tests to click exactly.
+    pub fn caret_at(&self, pid: &str, off: usize) -> Value {
+        let Some(p) = self.session.locate(pid) else { return Value::Null };
+        match self.session.caret(&Pos::new(p.story, p.path, off), 0) {
+            Some(c) => json!({ "page": c.page, "x": c.x, "top": c.top, "height": c.height }),
+            None => Value::Null,
+        }
+    }
+
     /// Underlines for every proofing issue: {underlines: [{page, x, y, w, kind}], count, status}.
     pub fn issues(&self) -> Value {
         let mut out = vec![];
@@ -462,6 +476,7 @@ impl Editor {
     fn edited(&mut self, pages: Vec<usize>) {
         self.redraw.extend(pages);
         for pid in self.session.take_edited() {
+            self.journal.insert(pid.clone());
             self.proof.issues.remove(&pid);
             self.proof.queue.insert(pid.clone());
             if let Some(m) = self.meta.get_mut(&pid) {
@@ -470,7 +485,35 @@ impl Editor {
                 }
             }
         }
-        self.last_edit = Instant::now();
+        self.last_edit = Some(Instant::now());
+    }
+
+    /// What changed since the last call, for a crash-safe journal: each edited
+    /// paragraph's `w:p` by id, and changed relationship parts as `rels|path`.
+    pub fn take_journal(&mut self) -> Value {
+        let mut out = serde_json::Map::new();
+        for key in std::mem::take(&mut self.journal) {
+            if let Some(path) = key.strip_prefix("rels|") {
+                if let Some(x) = self.session.parts.get(path) {
+                    out.insert(key.clone(), json!(x));
+                }
+            } else if let Some(m) = self.meta.get(&key) {
+                if let Some(xml) = self.session.parts.get(&m.path) {
+                    if let Some(r) = find_paragraph(xml, &key) {
+                        out.insert(key.clone(), json!(&xml[r]));
+                    }
+                }
+            }
+        }
+        Value::Object(out)
+    }
+
+    /// The target language changed: proofing follows it.
+    pub fn set_language(&mut self, word_code: &str) {
+        self.proof.lang = proof::lt_code(word_code);
+        self.proof.issues.clear();
+        let ids: Vec<String> = self.meta.iter().filter(|(_, m)| m.tgt_text != m.src_text).map(|(p, _)| p.clone()).collect();
+        self.proof.queue.extend(ids);
     }
 
     /// Parts changed since the last call (to save).
@@ -862,6 +905,7 @@ impl Editor {
                 let rels_xml = self.session.parts.get(&rp).cloned().or_else(|| babel_pages::read_part(self.session.original(), &rp)).unwrap_or_else(ooxml::empty_rels);
                 let mut rels = Part::parse(&rels_xml).map_err(|e| e.to_string())?;
                 let id = ooxml::add_link_rel(&mut rels, url);
+                self.journal.insert(format!("rels|{rp}"));
                 extra.insert(rp, rels.serialize());
                 LinkTarget::Rel(id)
             }
@@ -884,7 +928,7 @@ impl Editor {
 
     /// The next batch to check, if it's time (`now` paced by the caller).
     pub fn proof_batch(&mut self) -> Option<proof::Batch> {
-        if self.last_edit.elapsed() < PROOF_DELAY {
+        if self.last_edit.is_some_and(|t| t.elapsed() < PROOF_DELAY) {
             return None;
         }
         let texts: HashMap<String, String> = self.proof.queue.iter().filter_map(|pid| self.text_of(pid).map(|t| (pid.clone(), t))).collect();

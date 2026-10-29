@@ -19,6 +19,10 @@ Babel comes in three forms, all with the same editor:
 ## Architecture
 
 ```
+crates/babel-docx     the Word format: write-back, normalising, ids, text, links (ooxml.js in Rust)
+crates/babel-pages    page layout and drawing with WordCraft's engine; the editing session
+crates/babel-editor   the editor without a platform: keys, selection, undo, links, done, proofing
+crates/babel-wasm     babel-editor for the browser (WebAssembly)
 crates/babel-core     storage (SQLite) and the paragraph merge
 crates/babel-server   HTTP API + the web app (embedded), accounts
 crates/babel-sync     syncing a local store with a server account
@@ -83,37 +87,34 @@ the source of truth, and an edit rewrites the text of runs inside it.
 - Zoom is a `transform: scale` on a sized wrapper, so layout measurements
   (`offsetHeight`) stay in document pixels.
 
-## Native layout and editing (desktop, in progress)
+## Babel's own layout engine
 
-`crates/babel-pages` lays documents out with WordCraft's engine (the
+Documents are laid out by WordCraft's engine (MIT/Apache, the
 `inthevidual/wordcraft` fork, whose .docx reader keeps each paragraph's
-`data-bp` and each run's `data-br`), and `crates/babel-docx` is the Rust
-port of the write-back (`applyParagraph`), checked against the JavaScript on
-2,254 generated cases (`tests/parity.rs`). In the desktop app, **Native
-Layout** on the editor page shows both documents laid out natively, and the
-translation is edited there:
+`data-bp` and each run's `data-br`), and edited by `babel-editor`, one editor
+for both platforms:
 
-- click for the caret, drag, Shift+click or Shift+arrows/Home/End to select,
-  double-click for a word, Ctrl+A for the paragraph (a selection stays within
-  one paragraph, as in the web editor);
-- type (dead keys, compose and input methods go through a hidden text input
-  at the caret, with the text being composed shown there), Backspace/Delete,
-  Shift+Enter for a line break, Enter to go to the next paragraph;
-- Ctrl+B/I/U on a selection, written as the web editor writes them;
-- Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z: undo puts the paragraph's XML back exactly,
-  typing is one step;
-- Ctrl+C/X/V (plain text; newlines paste as line breaks), right-click menu;
-- spelling and grammar with LanguageTool for the paragraphs that differ from
-  the original, underlined; a click on an underline offers its suggestions
-  and Ignore (shared with the web editor through the project);
-- saved a second after typing stops; saves from elsewhere (sync, the web
-  editor) appear at once when nothing here is unsaved, and are merged
-  otherwise.
+- in the browser it is WebAssembly (`crates/babel-wasm`, about 3.7 MB with
+  brotli, built into `web/wasm/` by `make wasm`), drawn on canvases by
+  `web/js/wasm-view.js`, with the fonts in `web/fonts/` given to it;
+- in the desktop app it is native Rust, drawn into the Kirigami window
+  (**Native Layout** on the editor page).
 
-What the native editor doesn't do yet that the web one does: pasting links
-(Ctrl+K), Mark as done, Revert paragraph, the source panel's look-up and
-link menus, and the LanguageTool account, picky mode and personal dictionary
-from the web editor's settings (the desktop uses the free API with defaults).
+It is the web editor's default; Settings › *Use the classic editor* goes back
+to docx-preview and contenteditable, and a build without `web/wasm/` falls
+back to that by itself. The write-back is held to the JavaScript
+(`crates/babel-docx/tests`: 2,254 write-back cases, 1,600 more for ids, text
+and links), so both editors save the same XML.
+
+What it does: the caret, selection (within a paragraph, as before) by
+mouse or Shift+keys, double-click for a word; typing with input methods,
+Backspace/Delete, Shift+Enter, Enter to the next paragraph, Ctrl+Enter marks
+done; Ctrl+B/I/U, Ctrl+Z/Y, Ctrl+A, Ctrl+C/X/V (plain text), Ctrl+K pastes a
+link; Revert and Copy the original from the menu; spelling and grammar
+underlined with suggestions, Ignore and Add to dictionary. In the original:
+a click goes to the translation, select to copy or look up in
+Merriam-Webster, Copy link. Pages flow as they would in Word: a longer
+translation takes more pages (the status bar says how many).
 
 ## Recoverability
 
@@ -230,12 +231,17 @@ bar shows the active paragraph.
 | `test/make-fixture.py` | builds `test/fixtures/sample.docx` |
 | `test/e2e.mjs` | browser test: edit, format, breaks, guards, headers, overflow, proofing, reload, crash recovery, download, pairing |
 | `test/sync.mjs` | two signed-in browsers: live updates and merged simultaneous edits |
+| `test/e2e-wasm.mjs` | the WebAssembly editor: typing, journal, selection and bold, line breaks, undo, done, Copy link and Ctrl+K, revert, proofing, reload, earlier-session runs, download |
+| `web/js/wasm-view.js` | the WebAssembly editor's view: canvases, overlays, input, menus, proofing requests |
+| `crates/babel-editor/src/` | the shared editor (`lib.rs`) and proofing (`proof.rs`) |
 
 ## Build and run
 
-Needs Rust, Qt 6 (base, declarative, webengine), Kirigami 6 and, for
-installing, `make`. On Arch: `pacman -S rust qt6-webengine kirigami
-qqc2-desktop-style`.
+Needs Rust, Qt 6 (base, declarative, webengine), Kirigami 6, the Rust
+WebAssembly target and wasm-bindgen, and `make`. On Arch: `pacman -S rust
+rust-wasm wasm-bindgen qt6-webengine kirigami qqc2-desktop-style`.
+`make wasm` builds the browser editor into `web/wasm/` (the desktop and server
+builds do it first: they embed `web/`).
 
 ```
 make install            # babel-desktop into ~/.local (PREFIX=/usr with sudo)
@@ -267,14 +273,17 @@ Static site: serve `web/` as files (`python3 -m http.server 8790` from `web/`).
 cargo test --workspace                 # store, merge, server-backed sync engine
 python3 test/make-fixture.py
 
-# the editor on the static site
+# the editors on the static site
+make wasm
 (cd web && python3 -m http.server 8790) &
-node test/e2e.mjs                      # needs Playwright and Chrome (PLAYWRIGHT_DIR, CHROME)
+node test/e2e-wasm.mjs                 # Babel's layout engine (WebAssembly)
+node test/e2e.mjs                      # the classic editor; both need Playwright and Chrome (PLAYWRIGHT_DIR, CHROME)
 
 # the editor against babel-server, and two devices on one account
 babel-server --db /tmp/t.db user add tester    # password testpass123
 babel-server --db /tmp/t.db serve --listen 127.0.0.1:8791 &
 BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/e2e.mjs
+BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/e2e-wasm.mjs
 BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/sync.mjs
 ```
 
@@ -291,6 +300,9 @@ BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/sync.mjs
   text is in Versions, not shown side by side.
 - The settings, versions and help dialogs are still the editor's own (web)
   dialogs inside the desktop window.
+- With Babel's layout engine, page breaks are its own (WordCraft's estimate
+  is about 55 % of the way to Word's rules); the classic editor shows Word's
+  recorded breaks instead.
 
 ## Deploy
 

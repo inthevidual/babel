@@ -4,15 +4,20 @@
 PREFIX ?= $(HOME)/.local
 BIN = target/release
 
-.PHONY: all desktop server install install-server test uninstall
+.PHONY: all desktop server wasm install install-server test uninstall
 
 all: desktop server
 
-desktop:
+desktop: wasm
 	cargo build --release -p babel-desktop
 
-server:
+server: wasm
 	cargo build --release -p babel-server
+
+# The editor for the browser: web/wasm/ (needs rust-wasm and wasm-bindgen).
+wasm:
+	cargo build --profile wasm -p babel-wasm --target wasm32-unknown-unknown
+	wasm-bindgen --target web --no-typescript --out-dir web/wasm target/wasm32-unknown-unknown/wasm/babel_wasm.wasm
 
 install: desktop
 	install -Dm755 $(BIN)/babel-desktop $(PREFIX)/bin/babel-desktop

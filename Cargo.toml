@@ -1,9 +1,16 @@
 [workspace]
 resolver = "3"
-members = ["crates/babel-core", "crates/babel-docx", "crates/babel-server", "crates/babel-sync", "crates/babel-pages", "crates/babel-editor", "crates/babel-desktop"]
+members = ["crates/babel-core", "crates/babel-docx", "crates/babel-server", "crates/babel-sync", "crates/babel-pages", "crates/babel-editor", "crates/babel-wasm", "crates/babel-desktop"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/inthevidual/babel"
+
+# The browser build: smaller and faster to download (Makefile: make wasm).
+[profile.wasm]
+inherits = "release"
+lto = true
+codegen-units = 1
+strip = "debuginfo"

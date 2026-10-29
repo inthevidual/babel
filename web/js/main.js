@@ -17,7 +17,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const SETTINGS_KEY = 'babel.settings';
 const DICT_KEY = 'babel.dictionary';
 const settings = Object.assign({
-  proof: true, picky: false, native: false, marks: true, sync: true,
+  proof: true, picky: false, native: false, marks: true, sync: true, engine: 'babel',
   endpoint: 'https://api.languagetool.org', user: '', key: '', lastLang: 'sv-SE', zoom: 'fit',
 }, readJSON(SETTINGS_KEY, {}));
 let dictionary = new Set(readJSON(DICT_KEY, []));
@@ -365,6 +365,8 @@ async function openProject(id) {
   document.title = `${project.name} — Babel`;
   updateLangPill();
 
+  if (settings.engine !== 'classic' && await openWasm(session, stored)) return;
+
   // Render the source, paginate it, then mirror onto the target.
   $('#loadingText').textContent = 'Laying out the original…';
   const srcBytes = await X.buildRenderable(source.bytes, source.parts);
@@ -393,6 +395,84 @@ async function openProject(id) {
   if (Object.keys(stored).length) snapshot('session start');
   const first = $$('p[data-p]', tgtRoot).find(p => !p.closest('header, footer') && /\p{L}/u.test(p.textContent));
   if (first) E.placeCaret(first, 'start');
+}
+
+// The editor in WebAssembly (wasm-view.js): Babel's own layout engine, the
+// same editor as the desktop app's. Everything around it stays as it is:
+// the view journals each edited paragraph and hands changed parts back into
+// P.tgt / P.rels, which save, versions and download work from.
+async function openWasm(session, stored) {
+  $('#loadingText').textContent = 'Starting Babel’s layout engine…';
+  srcZoom.set(1); tgtZoom.set(1); // the view zooms itself, drawing pages sharp
+  const translated = Object.fromEntries(partPaths().map(p => [p, serializePart(p)]));
+  let view;
+  try {
+    // Loaded only when used: a build without web/wasm/ still opens, classically.
+    const { WasmView } = await import('./wasm-view.js');
+    view = await WasmView.open({
+      original: P.source.bytes, sourceParts: P.source.parts, translated, project: P.project,
+      srcRoot, tgtRoot, srcScroll: $('#srcScroll'), tgtScroll: $('#tgtScroll'),
+      hooks: {
+        settings, dictionary,
+        readOnly: () => !P || P.readOnly,
+        toast: (msg, kind) => toast(msg, kind),
+        journal: entries => { for (const [k, xml] of Object.entries(entries)) S.journalWrite(P.project.id, k, xml); setSaveState('pending'); },
+        parts: (parts, meta) => {
+          if (!P) return;
+          for (const [path, xml] of Object.entries(parts)) {
+            if (P.project.textParts.includes(path)) P.tgt[path] = X.parseXml(xml);
+            else P.rels[path] = X.parseXml(xml);
+            P.dirty.add(path);
+          }
+          P.project.confirmed = meta.confirmed; P.confirmed = new Set(meta.confirmed);
+          P.project.ignored = meta.ignored; P.ignored = new Set(meta.ignored);
+          P.project.stats = meta.stats;
+          P.changedSinceSnapshot = true;
+          setSaveState('pending');
+          scheduleSave();
+        },
+        addWord: w => { dictionary.add(w); writeJSON(DICT_KEY, [...dictionary]); },
+        status: wasmStatus,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    toast('Babel’s layout engine could not open this document, so the classic editor is used: ' + (e.message || e), 'warn', 9000);
+    return false;
+  }
+  if (P !== session) { view.close(); return true; }
+  P.view = view;
+  applyZoom(settings.zoom);
+  $('#syncScroll').checked = settings.sync;
+  $('#loading').hidden = true;
+  setSaveState('saved', P.project.updatedAt);
+  if (P.dirty.size) scheduleSave(500);
+  if (Object.keys(stored).length) snapshot('session start');
+  view.focus();
+  return true;
+}
+
+function wasmStatus(t, para, issues) {
+  if (!t) return;
+  const lang = langByCode(P.project.targetLang);
+  const diff = t.srcChars ? (t.tgtChars - t.srcChars) / t.srcChars * 100 : 0;
+  const diffCls = Math.abs(diff) > 10 ? 'warn' : Math.abs(diff) > 3 ? 'note' : 'ok';
+  const paraInfo = para ? `${para.done ? '<span class="ok">✓ confirmed</span> · ' : ''}¶ ${nf.format(para.tgtChars)}` : '';
+  $('#srcStatus').innerHTML = `
+    <span class="tag">Original</span>
+    <span title="Characters including spaces, as Word counts them (body, footnotes and endnotes). ${nf.format(t.srcWords)} words."><b>${nf.format(t.srcChars)}</b> characters with spaces</span>
+    <span>${t.srcPages} pages</span>
+    <span class="grow"></span>
+    <span class="para">${para ? '¶ ' + nf.format(para.srcChars) : ''}</span>`;
+  $('#tgtStatus').innerHTML = `
+    <span class="tag tgt">${esc(lang.name)}</span>
+    <span title="Characters including spaces, as Word counts them (body, footnotes and endnotes). ${nf.format(t.tgtWords)} words."><b>${nf.format(t.tgtChars)}</b> characters with spaces</span>
+    <span class="delta ${diffCls}" title="Length compared with the original">${pct.format(diff)} %</span>
+    <span title="Paragraphs changed or confirmed, of those with text">${t.total ? Math.floor(100 * t.done / t.total) : 0} % done <small>(${t.done}/${t.total})</small></span>
+    ${settings.proof ? `<span class="chip ${issues.count ? 'warn' : 'ok'}" title="${esc(issues.status || 'Spelling and grammar, LanguageTool')}">${issues.status ? esc(issues.status) : issues.count ? `${issues.count} issue${issues.count > 1 ? 's' : ''}` : 'No issues'}</span>` : ''}
+    <span title="Pages, as Babel lays the translation out">${t.tgtPages} pages${t.tgtPages !== t.srcPages ? ` <small>(original ${t.srcPages})</small>` : ''}</span>
+    <span class="grow"></span>
+    <span class="para">${paraInfo}</span>`;
 }
 
 function styleHolder(which) {
@@ -445,11 +525,13 @@ function indexXml() {
 
 async function closeProject() {
   if (!P) return;
+  P.view?.close();
   flushAll();
   await save();
   P.lock?.release();
   P.unwatch();
   proofer.dirty.clear();
+  P.view = null;
   P = null;
   srcRoot.innerHTML = tgtRoot.innerHTML = '';
   $('#docStyles').innerHTML = '';
@@ -526,6 +608,7 @@ function totals() {
 
 let statusTimer = 0;
 function updateStatus() {
+  if (P?.view) return;
   cancelAnimationFrame(statusTimer);
   statusTimer = requestAnimationFrame(() => {
     if (!P) return;
@@ -671,6 +754,7 @@ function scheduleSave(delay = 900) {
 
 async function save() {
   if (!P || P.readOnly) return;
+  P.view?.flush();
   if (saving) { saveAgain = true; return saving; }
   clearTimeout(saveTimer);
   saveFirstPending = 0;
@@ -681,7 +765,7 @@ async function save() {
   const parts = {};
   for (const path of paths) parts[path] = serializePart(path);
   P.project.updatedAt = Date.now();
-  P.project.stats = totals();
+  if (!P.view) P.project.stats = totals();
   setSaveState('saving');
   saving = (async () => {
     try {
@@ -716,10 +800,11 @@ async function snapshot(reason) {
   if (!P) return;
   const session = P;
   flushAll();
+  P.view?.flush();
   const parts = allParts();
   P.lastSnapshotAt = Date.now();
   P.changedSinceSnapshot = false;
-  try { await S.addSnapshot(session.project.id, reason, parts, totals()); }
+  try { await S.addSnapshot(session.project.id, reason, parts, P.view ? P.project.stats : totals()); }
   catch (e) { console.warn('snapshot failed', e); }
 }
 
@@ -904,12 +989,19 @@ function fitZoom() {
 }
 function applyZoom(z) {
   settings.zoom = z; saveSettings();
+  if (P?.view) {
+    const v = z === 'fit' ? Math.max(0.3, Math.min(2, ($('#tgtScroll').clientWidth - 24) / (P.view.pageWidthPx() + 48))) : z;
+    P.view.setZoom(v);
+    $('#zoomVal').textContent = `${Math.round(v * 100)} %`;
+    $('#zoomVal').classList.toggle('on', z === 'fit');
+    return;
+  }
   const v = z === 'fit' ? fitZoom() : z;
   srcZoom.set(v); tgtZoom.set(v);
   $('#zoomVal').textContent = `${Math.round(v * 100)} %`;
   $('#zoomVal').classList.toggle('on', z === 'fit');
 }
-const currentZoom = () => (settings.zoom === 'fit' ? fitZoom() : settings.zoom);
+const currentZoom = () => (P?.view ? P.view.zoom : settings.zoom === 'fit' ? fitZoom() : settings.zoom);
 $('#zoomIn').onclick = () => applyZoom(ZOOMS.find(z => z > currentZoom() + 0.001) ?? 2);
 $('#zoomOut').onclick = () => applyZoom([...ZOOMS].reverse().find(z => z < currentZoom() - 0.001) ?? 0.5);
 $('#zoomVal').onclick = () => applyZoom('fit');
@@ -1217,7 +1309,7 @@ function menuContext(e, panel) {
 
 for (const [root, panel] of [[srcRoot, 'src'], [tgtRoot, 'tgt']]) {
   root.addEventListener('contextmenu', e => {
-    if (!P || e.shiftKey) return;
+    if (!P || P.view || e.shiftKey) return;
     hideIssue();
     const ctx = menuContext(e, panel);
     if (menu.open(ctx, e.clientX, e.clientY)) e.preventDefault();
@@ -1501,6 +1593,7 @@ const LANG_SUFFIX = code => code.split('-')[0].toUpperCase();
 $('#btnDownload').onclick = async () => {
   if (!P) return;
   flushAll();
+  P.view?.flush();
   const btn = $('#btnDownload');
   btn.disabled = true;
   try {
@@ -1628,6 +1721,7 @@ $('#btnSettings').onclick = () => {
   $('#setUser').value = settings.user;
   $('#setKey').value = settings.key;
   $('#setMarks').checked = settings.marks;
+  $('#setClassic').checked = settings.engine === 'classic';
   $('#setDict').value = [...dictionary].sort().join('\n');
   const dlg = $('#settingsDlg');
   dlg.returnValue = '';
@@ -1643,10 +1737,20 @@ $('#btnSettings').onclick = () => {
       key: $('#setKey').value.trim(),
       marks: $('#setMarks').checked,
     });
+    const engine = $('#setClassic').checked ? 'classic' : 'babel';
+    const engineChanged = engine !== settings.engine;
+    settings.engine = engine;
     saveSettings();
     dictionary = new Set($('#setDict').value.split('\n').map(s => s.trim()).filter(Boolean));
     writeJSON(DICT_KEY, [...dictionary]);
     if (!P) return;
+    if (engineChanged) {
+      toast(engine === 'classic' ? 'Switching to the classic editor…' : 'Switching to Babel’s layout engine…');
+      const id = P.project.id;
+      closeProject().then(() => openProject(id)).catch(fatal);
+      return;
+    }
+    if (P.view) { P.view.setProofing(settings, dictionary); return; }
     setMarks();
     for (const p of $$('p[data-p]', tgtRoot)) p.spellcheck = settings.native;
     configureProofer();
@@ -1668,6 +1772,7 @@ $('#langPill').onclick = async () => {
   settings.lastLang = lang; saveSettings();
   tgtRoot.lang = lang;
   updateLangPill();
+  if (P.view) { P.view.setLanguage(lang); S.saveProjectMeta(P.project); return; }
   configureProofer();
   P.issues.clear(); paintHighlights();
   for (const [pid, m] of P.meta) if (m.edited) proofer.queue(pid, 0);

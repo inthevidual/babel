@@ -21,6 +21,9 @@ const check = (cond, msg) => { console.log(`${cond ? 'ok  ' : 'FAIL'} ${msg}`); 
 const browser = await chromium.launch({ executablePath: process.env.CHROME ?? '/usr/bin/google-chrome' });
 const ctx = await browser.newContext({ viewport: { width: 1500, height: 950 }, acceptDownloads: true });
 await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(BASE).origin });
+// This suite is the classic editor's (contenteditable over docx-preview);
+// test/e2e-wasm.mjs is Babel's own layout engine's.
+await ctx.addInitScript(() => { try { localStorage.setItem('babel.settings', JSON.stringify({ ...JSON.parse(localStorage.getItem('babel.settings') ?? '{}'), engine: 'classic' })); } catch {} });
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));

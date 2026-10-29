@@ -1,0 +1,17 @@
+[package]
+name = "babel-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+babel-editor = { version = "0.1.0", path = "../babel-editor" }
+babel-pages = { version = "0.1.0", path = "../babel-pages" }
+console_error_panic_hook = "0.1.7"
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+wasm-bindgen = "=0.2.128"
+wordcraft-fonts = { git = "https://github.com/inthevidual/wordcraft", rev = "edcff3ebc647ff62251f24e278747d9f139cc139", version = "0.12.0" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
