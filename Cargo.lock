@@ -275,6 +275,7 @@ dependencies = [
  "anyhow",
  "axum",
  "babel-core",
+ "babel-editor",
  "babel-pages",
  "babel-server",
  "babel-sync",

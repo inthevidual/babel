@@ -4,8 +4,6 @@
 mod app;
 mod bridge;
 mod native;
-mod proof;
-mod pages;
 mod sync;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};

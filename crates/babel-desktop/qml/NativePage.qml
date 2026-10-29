@@ -5,28 +5,36 @@ import org.kde.kirigami as Kirigami
 import se.cptjanst.babel
 
 // Both documents as Babel's own layout engine lays them out, side by side and
-// scrolling together. The translation is edited here: click, drag or
-// double-click to place the caret or select (within a paragraph), type (input
-// methods included), Backspace/Delete, arrows with Shift to select,
-// Shift+Enter for a line break, Ctrl+Z/Y, Ctrl+B/I/U, Ctrl+A, Ctrl+C/X/V.
-// Spelling and grammar are checked as you go. Saved a moment after typing stops.
+// scrolling together; the editor is babel-editor (shared with the browser).
+//
+// The translation: click, drag or double-click to place the caret or select
+// (within a paragraph), type (input methods included), Backspace/Delete,
+// arrows with Shift to select, Shift+Enter for a line break, Enter for the
+// next paragraph, Ctrl+Enter to mark it done, Ctrl+Z/Y, Ctrl+B/I/U, Ctrl+A,
+// Ctrl+C/X/V, Ctrl+K to paste a link; right-click for the rest. Spelling and
+// grammar are checked as you go. Saved a moment after typing stops.
+//
+// The original: a click goes to the translation's paragraph; select to copy
+// or look up; right-click a link to copy it.
 Kirigami.Page {
     id: page
 
     property string projectId: ""
     property string projectName: ""
-    property var source: []
     property var caret: null
     property var selection: []
+    property var sourceSelection: []
     property var styles: ({ b: false, i: false, u: false })
+    property var paragraph: null
+    property var stats: null
     property bool canUndo: false
     property bool canRedo: false
     property var underlines: []
+    property var marks: []
     property string proofStatus: ""
     property int issueCount: 0
     property bool proofing: false
     property real zoom: 1.0
-    property bool busy: false
     property bool editing: false
     property bool unsaved: false
     property bool syncing: false
@@ -41,18 +49,17 @@ Kirigami.Page {
             Backend.nativeClose();
         projectId = id;
         projectName = name;
-        source = [];
+        source.clear();
         target.clear();
-        caret = null;
-        selection = [];
-        underlines = [];
-        busy = true;
-        Backend.renderPages(id);
         const r = JSON.parse(Backend.nativeOpen(id));
         editing = !!r;
         if (r) {
-            setPages(r.pages);
+            for (const p of r.source)
+                source.append(p);
             proofing = r.proofing;
+            r.all = true;
+            answer(JSON.stringify(r), false);
+            unsaved = false;
         }
         ime.forceActiveFocus();
     }
@@ -79,7 +86,11 @@ Kirigami.Page {
         syncing = false;
     }
 
-    // Takes an answer from the backend: caret, selection, pages drawn again.
+    function n(x) {
+        return Number(x || 0).toLocaleString(Qt.locale(), "f", 0);
+    }
+
+    // Takes an answer from the backend: caret, selections, pages drawn again, marks.
     function answer(json, fromClick) {
         const r = JSON.parse(json);
         if (!r)
@@ -95,12 +106,20 @@ Kirigami.Page {
                 refreshIssues();
             }
         }
+        if (r.marks)
+            marks = r.marks;
         if (r.error)
             applicationWindow().showPassiveNotification(r.error, "short");
+        if (r.message)
+            applicationWindow().showPassiveNotification(r.message, "short");
         caret = r.caret;
         selection = r.selection || [];
+        sourceSelection = r.sourceSelection || [];
         if (r.styles)
             styles = r.styles;
+        paragraph = r.paragraph || null;
+        if (r.stats)
+            stats = r.stats;
         canUndo = !!r.canUndo;
         canRedo = !!r.canRedo;
         blink.restart();
@@ -141,6 +160,10 @@ Kirigami.Page {
             answer(r, false);
     }
 
+    function pasteLink() {
+        answer(Backend.nativePasteLink(), false);
+    }
+
     // The caret's place in the page's coordinates (for the input method).
     function caretPoint() {
         if (!caret)
@@ -172,12 +195,12 @@ Kirigami.Page {
 
     // Test hook (babel-desktop --project=ID --native --native-type=TEXT): puts
     // the caret near the top of page 1's text and types TEXT through the same
-    // path as committed keyboard text.
+    // path as committed keyboard text. A trailing "+" is deleted again, the
+    // six characters before the caret are selected and made bold.
     function typeTest(text) {
         page.answer(Backend.nativeClick(0, 100, 150, false), false);
         for (const ch of text)
             page.answer(Backend.nativeText(ch), false);
-        // --native-type=…+ also selects the word before the caret and makes it bold.
         if (text.endsWith("+")) {
             page.key(Qt.Key_Backspace, "", 0);
             for (let i = 0; i < 6; i++)
@@ -229,6 +252,22 @@ Kirigami.Page {
             onTriggered: page.key(0x55, "", 0x04000000)
         },
         Kirigami.Action {
+            icon.name: "insert-link"
+            text: "Paste Link"
+            displayHint: Kirigami.DisplayHint.IconOnly
+            enabled: page.selection.length > 0
+            onTriggered: page.pasteLink()
+        },
+        Kirigami.Action {
+            icon.name: "checkmark"
+            text: page.paragraph && page.paragraph.done ? "Unmark as Done" : "Mark as Done"
+            displayHint: Kirigami.DisplayHint.IconOnly
+            checkable: true
+            checked: !!(page.paragraph && page.paragraph.done)
+            enabled: page.paragraph !== null
+            onTriggered: page.key(0x01000004, "", 0x04000000)
+        },
+        Kirigami.Action {
             icon.name: "zoom-out"
             text: "Zoom Out"
             displayHint: Kirigami.DisplayHint.IconOnly
@@ -239,8 +278,18 @@ Kirigami.Page {
             text: "Zoom In"
             displayHint: Kirigami.DisplayHint.IconOnly
             onTriggered: page.zoom = Math.min(3, page.zoom * 1.2)
+        },
+        Kirigami.Action {
+            icon.name: "tools-check-spelling"
+            text: "Proofing Settings…"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: proofDialog.openWith(JSON.parse(Backend.proofSettings()))
         }
     ]
+
+    ListModel {
+        id: source
+    }
 
     ListModel {
         id: target
@@ -248,16 +297,6 @@ Kirigami.Page {
 
     Connections {
         target: Backend
-        function onPagesReady(id, json) {
-            if (id !== page.projectId)
-                return;
-            page.source = JSON.parse(json).source;
-            page.busy = false;
-        }
-        function onMessage(text, error) {
-            if (error)
-                page.busy = false;
-        }
         function onNativeIssuesChanged() {
             page.refreshIssues();
         }
@@ -292,17 +331,24 @@ Kirigami.Page {
         contentItem: RowLayout {
             QQC2.Label {
                 Layout.fillWidth: true
-                text: "Original"
+                Layout.preferredWidth: 1
+                elide: Text.ElideRight
                 color: Kirigami.Theme.disabledTextColor
+                text: page.stats ? "Original · " + page.n(page.stats.srcChars) + " characters with spaces · " + page.stats.srcPages + " pages" : "Original"
             }
             QQC2.Label {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 elide: Text.ElideRight
                 color: Kirigami.Theme.disabledTextColor
                 text: {
-                    if (!page.editing)
+                    if (!page.editing || !page.stats)
                         return "Translation";
-                    let t = "Translation" + (page.unsaved ? " · saving…" : " · saved");
+                    const s = page.stats;
+                    const d = s.srcChars ? (100 * (s.tgtChars - s.srcChars) / s.srcChars) : 0;
+                    let t = "Translation · " + page.n(s.tgtChars) + " characters" + (d ? " " + (d > 0 ? "+" : "") + d.toFixed(1) + " %" : "")
+                        + " · " + (s.total ? Math.floor(100 * s.done / s.total) : 0) + " % done (" + s.done + "/" + s.total + ")";
+                    t += page.unsaved ? " · saving…" : " · saved";
                     if (page.proofStatus)
                         t += " · " + page.proofStatus;
                     else if (page.proofing)
@@ -324,6 +370,16 @@ Kirigami.Page {
         opacity: 0.4
     }
 
+    component Highlight: Rectangle {
+        required property var modelData
+        x: modelData.x * page.pxPerPt
+        y: modelData.y * page.pxPerPt
+        width: Math.max(2, modelData.w * page.pxPerPt)
+        height: modelData.h * page.pxPerPt
+        color: Kirigami.Theme.highlightColor
+        opacity: 0.35
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
@@ -336,13 +392,18 @@ Kirigami.Page {
             spacing: Kirigami.Units.largeSpacing
             topMargin: Kirigami.Units.largeSpacing
             bottomMargin: Kirigami.Units.largeSpacing
-            model: page.source
+            model: source
+            cacheBuffer: 4000
             QQC2.ScrollBar.vertical: QQC2.ScrollBar {}
             onContentYChanged: page.follow(left, right)
             delegate: Item {
-                required property var modelData
+                id: spage
+                required property int index
+                required property string url
+                required property real w
+                required property real h
                 width: ListView.view.width
-                height: modelData.h * page.pxPerPt
+                height: h * page.pxPerPt
                 PageFrame {
                     anchors.centerIn: simg
                     width: simg.width + 2
@@ -351,12 +412,37 @@ Kirigami.Page {
                 Image {
                     id: simg
                     anchors.horizontalCenter: parent.horizontalCenter
-                    width: modelData.w * page.pxPerPt
-                    height: modelData.h * page.pxPerPt
-                    source: modelData.url
+                    width: spage.w * page.pxPerPt
+                    height: spage.h * page.pxPerPt
+                    source: spage.url
                     asynchronous: true
                     mipmap: true
                     cache: false
+                    Repeater {
+                        model: page.sourceSelection.filter(r => r.page === spage.index)
+                        Highlight {}
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.IBeamCursor
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        property bool dragging: false
+                        onPressed: mouse => {
+                            if (mouse.button === Qt.RightButton) {
+                                sourceMenu.show(JSON.parse(Backend.nativeSourceMenu(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt)));
+                                return;
+                            }
+                            ime.forceActiveFocus();
+                            dragging = true;
+                            page.answer(Backend.nativeSourceClick(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, (mouse.modifiers & Qt.ShiftModifier) !== 0), false);
+                        }
+                        onPositionChanged: mouse => {
+                            if (dragging && (mouse.buttons & Qt.LeftButton))
+                                page.answer(Backend.nativeSourceClick(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, true), false);
+                        }
+                        onReleased: dragging = false
+                        onDoubleClicked: mouse => page.answer(Backend.nativeSourceWord(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false)
+                    }
                 }
             }
         }
@@ -400,18 +486,23 @@ Kirigami.Page {
                     mipmap: true
                     cache: false
 
-                    // Selection.
+                    // Edited (blue) and done (green) paragraphs, beside them.
                     Repeater {
-                        model: page.selection.filter(r => r.page === tpage.index)
+                        model: page.marks.filter(m => m.page === tpage.index)
                         Rectangle {
                             required property var modelData
-                            x: modelData.x * page.pxPerPt
+                            x: modelData.x * page.pxPerPt - 9 * page.pxPerPt
                             y: modelData.y * page.pxPerPt
-                            width: Math.max(2, modelData.w * page.pxPerPt)
+                            width: Math.max(2, 2.5 * page.pxPerPt)
                             height: modelData.h * page.pxPerPt
-                            color: Kirigami.Theme.highlightColor
-                            opacity: 0.35
+                            radius: width / 2
+                            color: modelData.kind === "done" ? "#2f9a5d" : "#3c6fd6"
+                            opacity: 0.8
                         }
+                    }
+                    Repeater {
+                        model: page.selection.filter(r => r.page === tpage.index)
+                        Highlight {}
                     }
                     // Proofing underlines.
                     Repeater {
@@ -434,6 +525,8 @@ Kirigami.Page {
                         onPressed: mouse => {
                             ime.forceActiveFocus();
                             if (mouse.button === Qt.RightButton) {
+                                if (page.selection.length === 0)
+                                    page.answer(Backend.nativeClick(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, false), false);
                                 contextMenu.popup();
                                 return;
                             }
@@ -496,17 +589,25 @@ Kirigami.Page {
         }
         Keys.onPressed: event => {
             const ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
-            if (ctrl && event.key === Qt.Key_C) { page.copy(false); event.accepted = true; return; }
+            if (ctrl && event.key === Qt.Key_C) {
+                if (page.selection.length)
+                    page.copy(false);
+                else
+                    Backend.nativeCopySource();
+                event.accepted = true;
+                return;
+            }
             if (ctrl && event.key === Qt.Key_X) { page.copy(true); event.accepted = true; return; }
             if (ctrl && event.key === Qt.Key_V) { page.paste(); event.accepted = true; return; }
+            if (ctrl && event.key === Qt.Key_K) { page.pasteLink(); event.accepted = true; return; }
             // Text goes the input method's way (onTextChanged); everything else to the editor.
-            const special = ctrl || event.text === "" || event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete
-                || event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Tab;
             if (event.key === Qt.Key_Tab) {
                 if (page.key(0, "\t", 0))
                     event.accepted = true;
                 return;
             }
+            const special = ctrl || event.text === "" || event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete
+                || event.key === Qt.Key_Return || event.key === Qt.Key_Enter;
             if (special && page.key(event.key, event.text, event.modifiers))
                 event.accepted = true;
         }
@@ -528,11 +629,45 @@ Kirigami.Page {
         id: contextMenu
         QQC2.MenuItem { text: "Cut"; icon.name: "edit-cut"; enabled: page.selection.length > 0; onTriggered: page.copy(true) }
         QQC2.MenuItem { text: "Copy"; icon.name: "edit-copy"; enabled: page.selection.length > 0; onTriggered: page.copy(false) }
-        QQC2.MenuItem { text: "Paste"; icon.name: "edit-paste"; onTriggered: page.paste() }
+        QQC2.MenuItem { text: "Paste as Plain Text"; icon.name: "edit-paste"; onTriggered: page.paste() }
+        QQC2.MenuItem { text: "Paste Link"; icon.name: "insert-link"; enabled: page.selection.length > 0; onTriggered: page.pasteLink() }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem {
+            text: page.paragraph && page.paragraph.done ? "Unmark as Done" : "Mark as Done"
+            icon.name: "checkmark"
+            enabled: page.paragraph !== null
+            onTriggered: page.key(0x01000004, "", 0x04000000)
+        }
+        QQC2.MenuItem { text: "Revert Paragraph to the Original"; icon.name: "edit-reset"; enabled: page.paragraph !== null && page.paragraph.edited; onTriggered: page.answer(Backend.nativeRevert(), false) }
+        QQC2.MenuItem { text: "Copy the Original Text"; icon.name: "edit-copy"; enabled: page.paragraph !== null; onTriggered: Backend.nativeCopyOriginal() }
         QQC2.MenuSeparator {}
         QQC2.MenuItem { text: "Undo"; icon.name: "edit-undo"; enabled: page.canUndo; onTriggered: page.key(0x5A, "", 0x04000000) }
         QQC2.MenuItem { text: "Redo"; icon.name: "edit-redo"; enabled: page.canRedo; onTriggered: page.key(0x59, "", 0x04000000) }
         QQC2.MenuItem { text: "Select Paragraph"; onTriggered: page.key(0x41, "", 0x04000000) }
+    }
+
+    // The original's menu: what the right-click found there.
+    QQC2.Menu {
+        id: sourceMenu
+        property var found: ({})
+        function show(f) {
+            found = f || {};
+            popup();
+        }
+        QQC2.MenuItem { text: "Copy"; icon.name: "edit-copy"; enabled: !!sourceMenu.found.text; onTriggered: Backend.nativeCopySource() }
+        QQC2.MenuItem {
+            text: sourceMenu.found.lookup ? "Look Up “" + sourceMenu.found.lookup + "” in Merriam-Webster" : "Look Up in Merriam-Webster"
+            icon.name: "edit-find"
+            enabled: !!sourceMenu.found.lookup
+            onTriggered: Qt.openUrlExternally("https://www.merriam-webster.com/dictionary/" + encodeURIComponent(sourceMenu.found.lookup))
+        }
+        QQC2.MenuItem {
+            text: sourceMenu.found.link ? "Copy Link  " + sourceMenu.found.link : "Copy Link"
+            icon.name: "insert-link"
+            enabled: !!sourceMenu.found.link
+            onTriggered: Backend.nativeCopyLink()
+        }
+        QQC2.MenuItem { text: "Copy Paragraph Text"; icon.name: "edit-copy"; enabled: !!sourceMenu.found.paragraph; onTriggered: Backend.copyText(sourceMenu.found.paragraph) }
     }
 
     // A proofing issue under the caret after a click: what it is, suggestions, Ignore.
@@ -579,23 +714,65 @@ Kirigami.Page {
                     }
                 }
             }
-            QQC2.Button {
-                text: "Ignore"
-                flat: true
-                onClicked: {
-                    const i = issuePopup.issue;
-                    issuePopup.close();
-                    Backend.nativeIgnore(i.pid, i.n);
-                    page.refreshIssues();
-                    ime.forceActiveFocus();
+            RowLayout {
+                QQC2.Button {
+                    text: "Ignore"
+                    flat: true
+                    onClicked: {
+                        const i = issuePopup.issue;
+                        issuePopup.close();
+                        Backend.nativeIgnore(i.pid, i.n);
+                        page.refreshIssues();
+                        ime.forceActiveFocus();
+                    }
+                }
+                QQC2.Button {
+                    text: "Add to Dictionary"
+                    flat: true
+                    visible: issuePopup.issue !== null && issuePopup.issue.kind === "spelling"
+                    onClicked: {
+                        const i = issuePopup.issue;
+                        issuePopup.close();
+                        Backend.nativeAddWord(i.pid, i.n);
+                        page.refreshIssues();
+                        ime.forceActiveFocus();
+                    }
                 }
             }
         }
     }
 
-    QQC2.BusyIndicator {
-        anchors.centerIn: parent
-        running: page.busy
-        visible: running
+    Kirigami.Dialog {
+        id: proofDialog
+        title: "Proofing"
+        preferredWidth: Kirigami.Units.gridUnit * 22
+        padding: Kirigami.Units.largeSpacing
+        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
+        function openWith(s) {
+            picky.checked = !!s.picky;
+            words.text = (s.dictionary || []).join("\n");
+            open();
+        }
+        onAccepted: Backend.setProofSettings(picky.checked, words.text)
+        ColumnLayout {
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                text: "Edited paragraphs are checked with LanguageTool's free service. Words also in the original paragraph are never flagged."
+            }
+            QQC2.CheckBox {
+                id: picky
+                text: "Picky mode (more style suggestions)"
+            }
+            QQC2.Label { text: "Personal dictionary, one word a line:" }
+            QQC2.ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 8
+                QQC2.TextArea {
+                    id: words
+                    wrapMode: TextEdit.NoWrap
+                }
+            }
+        }
     }
 }

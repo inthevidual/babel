@@ -47,11 +47,6 @@ pub mod qobject {
         #[cxx_name = "stageFile"]
         fn stage_file(self: Pin<&mut Backend>, url: &QUrl) -> QString;
 
-        /// Lays out both documents natively; answers with pagesReady.
-        #[qinvokable]
-        #[cxx_name = "renderPages"]
-        fn render_pages(self: Pin<&mut Backend>, id: &QString);
-
         /// Opens the translation for editing on native pages: {pages: [{index, url, w, h}]}.
         #[qinvokable]
         #[cxx_name = "nativeOpen"]
@@ -112,6 +107,63 @@ pub mod qobject {
         #[cxx_name = "nativeReload"]
         fn native_reload(self: Pin<&mut Backend>, id: &QString) -> QString;
 
+        /// A click (or drag, with `extend`) on the original.
+        #[qinvokable]
+        #[cxx_name = "nativeSourceClick"]
+        fn native_source_click(self: Pin<&mut Backend>, page: i32, x: f64, y: f64, extend: bool) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "nativeSourceWord"]
+        fn native_source_word(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        /// What a right-click on the original offers: {text, lookup, link, paragraph}.
+        #[qinvokable]
+        #[cxx_name = "nativeSourceMenu"]
+        fn native_source_menu(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        /// Copies the link under the last right-click on the original.
+        #[qinvokable]
+        #[cxx_name = "nativeCopyLink"]
+        fn native_copy_link(self: Pin<&mut Backend>) -> QString;
+
+        /// Copies text to the clipboard.
+        #[qinvokable]
+        #[cxx_name = "copyText"]
+        fn copy_text(self: Pin<&mut Backend>, text: &QString);
+
+        /// Copies the original's selection.
+        #[qinvokable]
+        #[cxx_name = "nativeCopySource"]
+        fn native_copy_source(self: Pin<&mut Backend>);
+
+        /// Copies the original text of the paragraph at the caret.
+        #[qinvokable]
+        #[cxx_name = "nativeCopyOriginal"]
+        fn native_copy_original(self: Pin<&mut Backend>);
+
+        /// Reverts the paragraph at the caret to the original.
+        #[qinvokable]
+        #[cxx_name = "nativeRevert"]
+        fn native_revert(self: Pin<&mut Backend>) -> QString;
+
+        /// Ctrl+K: links the selection to the copied link or the clipboard's address.
+        #[qinvokable]
+        #[cxx_name = "nativePasteLink"]
+        fn native_paste_link(self: Pin<&mut Backend>) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "nativeAddWord"]
+        fn native_add_word(self: Pin<&mut Backend>, pid: &QString, n: i32);
+
+        /// Proofing settings: {picky, dictionary}.
+        #[qinvokable]
+        #[cxx_name = "proofSettings"]
+        fn proof_settings(self: Pin<&mut Backend>) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "setProofSettings"]
+        fn set_proof_settings(self: Pin<&mut Backend>, picky: bool, dictionary: &QString);
+
         /// New proofing results are in.
         #[qsignal]
         #[cxx_name = "nativeIssuesChanged"]
@@ -126,11 +178,6 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "nativeSave"]
         fn native_save(self: Pin<&mut Backend>);
-
-        /// JSON: {source: [{url, w, h}], target: [...], ms}.
-        #[qsignal]
-        #[cxx_name = "pagesReady"]
-        fn pages_ready(self: Pin<&mut Backend>, id: QString, pages: QString);
 
         #[qinvokable]
         #[cxx_name = "deleteProject"]
@@ -275,18 +322,6 @@ impl qobject::Backend {
         }
     }
 
-    fn render_pages(self: Pin<&mut Self>, id: &QString) {
-        let qt = self.qt_thread();
-        let id = id.to_string();
-        app().rt.spawn_blocking(move || {
-            let res = crate::pages::render(&id);
-            let _ = qt.queue(move |o| match res {
-                Ok(r) => o.pages_ready(QString::from(&id), QString::from(&serde_json::to_string(&r).unwrap_or_default())),
-                Err(e) => o.message(QString::from(&format!("The native layout failed: {e}")), true),
-            });
-        });
-    }
-
     fn native_open(self: Pin<&mut Self>, id: &QString) -> QString {
         match crate::native::open(&id.to_string()) {
             Ok(v) => QString::from(&v.to_string()),
@@ -310,39 +345,10 @@ impl qobject::Backend {
     }
 
     fn native_key(self: Pin<&mut Self>, key: i32, text: &QString, modifiers: i32) -> QString {
-        use crate::native::Key;
-        use babel_pages::edit::Style;
-        const SHIFT: i32 = 0x0200_0000;
-        const CTRL: i32 = 0x0400_0000;
-        let (shift, ctrl) = (modifiers & SHIFT != 0, modifiers & CTRL != 0);
-        let k = match (key, ctrl) {
-            (0x5A, true) if shift => Key::Redo,
-            (0x5A, true) => Key::Undo,
-            (0x59, true) => Key::Redo,
-            (0x42, true) => Key::Toggle(Style::Bold),
-            (0x49, true) => Key::Toggle(Style::Italic),
-            (0x55, true) => Key::Toggle(Style::Underline),
-            (0x41, true) => Key::SelectAll,
-            (_, true) => return QString::from("null"),
-            (0x0100_0012, _) => Key::Left,
-            (0x0100_0014, _) => Key::Right,
-            (0x0100_0013, _) => Key::Up,
-            (0x0100_0015, _) => Key::Down,
-            (0x0100_0010, _) => Key::Home,
-            (0x0100_0011, _) => Key::End,
-            (0x0100_0003, _) => Key::Backspace,
-            (0x0100_0007, _) => Key::Delete,
-            (0x0100_0004 | 0x0100_0005, _) if shift => Key::LineBreak,
-            (0x0100_0004 | 0x0100_0005, _) => Key::Enter,
-            _ => {
-                let t = text.to_string();
-                if t.is_empty() || t.chars().any(|c| c.is_control() && c != '\t') {
-                    return QString::from("null");
-                }
-                Key::Text(t)
-            }
-        };
-        QString::from(&crate::native::key(k, shift).to_string())
+        match babel_editor::Key::from_qt(key, &text.to_string(), modifiers) {
+            Some(k) => QString::from(&crate::native::key(k, modifiers & 0x0200_0000 != 0).to_string()),
+            None => QString::from("null"),
+        }
     }
 
     fn native_text(self: Pin<&mut Self>, text: &QString) -> QString {
@@ -350,7 +356,7 @@ impl qobject::Backend {
         if t.is_empty() {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(crate::native::Key::Text(t), false).to_string())
+        QString::from(&crate::native::key(babel_editor::Key::Text(t), false).to_string())
     }
 
     fn native_copy(self: Pin<&mut Self>, cut: bool) -> QString {
@@ -362,7 +368,7 @@ impl qobject::Backend {
         if !cut {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(crate::native::Key::Delete, false).to_string())
+        QString::from(&crate::native::key(babel_editor::Key::Delete, false).to_string())
     }
 
     fn native_paste(self: Pin<&mut Self>) -> QString {
@@ -370,7 +376,7 @@ impl qobject::Backend {
         if t.is_empty() {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(crate::native::Key::Text(t), false).to_string())
+        QString::from(&crate::native::key(babel_editor::Key::Text(t), false).to_string())
     }
 
     fn native_issues(self: Pin<&mut Self>) -> QString {
@@ -382,9 +388,69 @@ impl qobject::Backend {
     }
 
     fn native_ignore(self: Pin<&mut Self>, pid: &QString, n: i32) {
-        if let Err(e) = crate::native::ignore(&pid.to_string(), n.max(0) as usize) {
-            self.message(QString::from(&format!("Could not save that: {e}")), true);
+        crate::native::ignore(&pid.to_string(), n.max(0) as usize);
+    }
+
+    fn native_source_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64, extend: bool) -> QString {
+        QString::from(&crate::native::source_click(page.max(0) as usize, x as f32, y as f32, extend).to_string())
+    }
+
+    fn native_source_word(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        QString::from(&crate::native::source_word(page.max(0) as usize, x as f32, y as f32).to_string())
+    }
+
+    fn native_source_menu(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        QString::from(&crate::native::source_menu(page.max(0) as usize, x as f32, y as f32).to_string())
+    }
+
+    fn native_copy_link(mut self: Pin<&mut Self>) -> QString {
+        match crate::native::copy_source_link() {
+            Some(clip) => {
+                qobject::babel_clipboard_set(&QString::from(&clip));
+                self.as_mut().message(QString::from(&format!("Link copied: {clip}")), false);
+                QString::from(&clip)
+            }
+            None => QString::default(),
         }
+    }
+
+    fn copy_text(self: Pin<&mut Self>, text: &QString) {
+        qobject::babel_clipboard_set(text);
+    }
+
+    fn native_copy_source(self: Pin<&mut Self>) {
+        let t = crate::native::source_selected_text();
+        if !t.is_empty() {
+            qobject::babel_clipboard_set(&QString::from(&t));
+        }
+    }
+
+    fn native_copy_original(self: Pin<&mut Self>) {
+        if let Some(t) = crate::native::original_text() {
+            qobject::babel_clipboard_set(&QString::from(&t));
+        }
+    }
+
+    fn native_revert(self: Pin<&mut Self>) -> QString {
+        QString::from(&crate::native::revert().to_string())
+    }
+
+    fn native_paste_link(self: Pin<&mut Self>) -> QString {
+        let clip = qobject::babel_clipboard_text().to_string();
+        QString::from(&crate::native::paste_link(&clip).to_string())
+    }
+
+    fn native_add_word(self: Pin<&mut Self>, pid: &QString, n: i32) {
+        crate::native::add_to_dictionary(&pid.to_string(), n.max(0) as usize);
+    }
+
+    fn proof_settings(self: Pin<&mut Self>) -> QString {
+        QString::from(&crate::native::settings().to_string())
+    }
+
+    fn set_proof_settings(self: Pin<&mut Self>, picky: bool, dictionary: &QString) {
+        let words: Vec<String> = dictionary.to_string().lines().map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).collect();
+        crate::native::set_settings(picky, words);
     }
 
     fn native_reload(self: Pin<&mut Self>, id: &QString) -> QString {

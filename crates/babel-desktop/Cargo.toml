@@ -9,6 +9,7 @@ repository.workspace = true
 anyhow = "1.0.104"
 axum = "0.8.9"
 babel-core = { version = "0.1.0", path = "../babel-core" }
+babel-editor = { version = "0.1.0", path = "../babel-editor" }
 babel-pages = { version = "0.1.0", path = "../babel-pages" }
 babel-server = { version = "0.1.0", path = "../babel-server" }
 babel-sync = { version = "0.1.0", path = "../babel-sync" }
