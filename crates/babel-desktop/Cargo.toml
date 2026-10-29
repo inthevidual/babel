@@ -9,9 +9,10 @@ repository.workspace = true
 anyhow = "1.0.104"
 axum = "0.8.9"
 babel-core = { version = "0.1.0", path = "../babel-core" }
+babel-docx = { version = "0.1.0", path = "../babel-docx" }
 babel-editor = { version = "0.1.0", path = "../babel-editor" }
 babel-pages = { version = "0.1.0", path = "../babel-pages" }
-babel-server = { version = "0.1.0", path = "../babel-server" }
+babel-server = { version = "0.1.0", path = "../babel-server", default-features = false }
 babel-sync = { version = "0.1.0", path = "../babel-sync" }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 cxx = "1.0.205"

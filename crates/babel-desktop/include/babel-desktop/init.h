@@ -1,6 +1,5 @@
 #pragma once
 
-void babel_init_webengine();
 void babel_init_style();
 
 class QQmlApplicationEngine;

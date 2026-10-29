@@ -525,10 +525,17 @@ async fn events(
 
 // ── The web app ────────────────────────────────────────────────────────────
 
+#[cfg(feature = "web")]
 #[derive(rust_embed::RustEmbed)]
 #[folder = "../../web/"]
 struct Web;
 
+#[cfg(not(feature = "web"))]
+async fn static_file(_: Uri) -> Response {
+    (StatusCode::NOT_FOUND, "not found").into_response()
+}
+
+#[cfg(feature = "web")]
 async fn static_file(uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -561,6 +568,7 @@ async fn static_file(uri: Uri) -> Response {
     }
 }
 
+#[cfg(feature = "web")]
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }

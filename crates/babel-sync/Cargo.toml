@@ -8,7 +8,7 @@ repository.workspace = true
 [dependencies]
 anyhow = "1.0.104"
 babel-core = { version = "0.1.0", path = "../babel-core" }
-babel-server = { version = "0.1.0", path = "../babel-server" }
+babel-server = { version = "0.1.0", path = "../babel-server", default-features = false }
 base64 = "0.23.1"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1.0.229", features = ["derive"] }

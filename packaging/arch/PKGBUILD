@@ -6,9 +6,9 @@ pkgdesc='Translate Word documents side by side, with the layout intact (KDE desk
 arch=('x86_64')
 url='https://github.com/inthevidual/babel'
 license=('LicenseRef-unknown')
-depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'kirigami' 'qqc2-desktop-style'
+depends=('qt6-base' 'qt6-declarative' 'kirigami' 'qqc2-desktop-style'
          'hicolor-icon-theme' 'gcc-libs' 'glibc')
-makedepends=('cargo' 'git' 'rust-wasm' 'wasm-bindgen')
+makedepends=('cargo' 'git')
 provides=('babel-desktop')
 conflicts=('babel-desktop')
 options=('!lto')
@@ -24,16 +24,12 @@ prepare() {
   cd babel
   export RUSTUP_TOOLCHAIN=stable
   cargo fetch --locked --target "$(rustc --print host-tuple)"
-  cargo fetch --locked --target wasm32-unknown-unknown
 }
 
 build() {
   cd babel
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  # The editor in WebAssembly, embedded in the app's web editor.
-  cargo build --frozen --profile wasm -p babel-wasm --target wasm32-unknown-unknown
-  wasm-bindgen --target web --no-typescript --out-dir web/wasm target/wasm32-unknown-unknown/wasm/babel_wasm.wasm
   cargo build --frozen --release -p babel-desktop
 }
 

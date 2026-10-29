@@ -1,5 +1,6 @@
-//! The QML side's view of the app: the list of translations, opening files,
-//! and (in sync.rs) the account.
+//! The QML side's view of the app: the translations, opening and exporting
+//! them, versions, settings, the native editor (native.rs) and the account
+//! (sync.rs). Answers are JSON strings.
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -12,8 +13,6 @@ pub mod qobject {
 
     unsafe extern "C++" {
         include!("babel-desktop/init.h");
-        /// Must run before the QGuiApplication exists.
-        fn babel_init_webengine();
         /// The KDE controls style, unless the user picked one.
         fn babel_init_style();
 
@@ -28,9 +27,6 @@ pub mod qobject {
         #[qobject]
         #[qml_element]
         #[qml_singleton]
-        #[qproperty(QString, editor_url, cxx_name = "editorUrl")]
-        #[qproperty(QString, origin)]
-        #[qproperty(QString, data_dir, cxx_name = "dataDir")]
         #[qproperty(QString, sync_status, cxx_name = "syncStatus")]
         #[qproperty(QString, sync_server, cxx_name = "syncServer")]
         #[qproperty(QString, sync_user, cxx_name = "syncUser")]
@@ -38,21 +34,77 @@ pub mod qobject {
         #[qproperty(bool, syncing)]
         type Backend = super::BackendRust;
 
-        /// The translations as JSON: [{id, name, fileName, targetLang, updatedAt, stats}].
+        // ── Translations ────────────────────────────────────────────────
+
+        /// [{id, name, fileName, targetLang, langName, updatedAt, stats}].
         #[qinvokable]
         fn projects(self: &Backend) -> QString;
 
-        /// Reads a .docx for the editor; returns the id to open it by, or "".
+        /// The target languages: [{code, name, en, lt}].
         #[qinvokable]
-        #[cxx_name = "stageFile"]
-        fn stage_file(self: Pin<&mut Backend>, url: &QUrl) -> QString;
+        fn languages(self: &Backend) -> QString;
 
-        /// Opens the translation for editing on native pages: {pages: [{index, url, w, h}]}.
+        /// Opens a .docx as a new translation into `lang`; its id, or "" (and a message).
+        #[qinvokable]
+        #[cxx_name = "importFile"]
+        fn import_file(self: Pin<&mut Backend>, url: &QUrl, lang: &QString) -> QString;
+
+        /// Continue from a translated file: the original and an earlier translation of it.
+        #[qinvokable]
+        #[cxx_name = "pairFiles"]
+        fn pair_files(self: Pin<&mut Backend>, original: &QUrl, translated: &QUrl, lang: &QString) -> QString;
+
+        /// Exports the translated .docx of a project (of a version, if `sid` isn't empty).
+        #[qinvokable]
+        #[cxx_name = "exportProject"]
+        fn export_project(self: Pin<&mut Backend>, id: &QString, sid: &QString, url: &QUrl) -> bool;
+
+        /// The file name an export gets ("name_SV.docx", with the time for a version).
+        #[qinvokable]
+        #[cxx_name = "exportName"]
+        fn export_name(self: &Backend, id: &QString, version_time: f64) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "deleteProject"]
+        fn delete_project(self: Pin<&mut Backend>, id: &QString);
+
+        // ── Versions and settings ───────────────────────────────────────
+
+        /// [{sid, time, reason, stats}], newest first.
+        #[qinvokable]
+        fn versions(self: &Backend, id: &QString) -> QString;
+
+        /// Keeps the translation being edited as a version named `name`.
+        #[qinvokable]
+        #[cxx_name = "addVersion"]
+        fn add_version(self: Pin<&mut Backend>, name: &QString);
+
+        /// Puts a version back (the current state is kept as a version first).
+        #[qinvokable]
+        #[cxx_name = "restoreVersion"]
+        fn restore_version(self: Pin<&mut Backend>, id: &QString, sid: &QString);
+
+        /// Changes the target language of the translation being edited.
+        #[qinvokable]
+        #[cxx_name = "setLanguage"]
+        fn set_language(self: Pin<&mut Backend>, code: &QString);
+
+        /// {proof, picky, dictionary, endpoint, user, key, marks}.
+        #[qinvokable]
+        fn settings(self: &Backend) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "setSettings"]
+        fn set_settings(self: Pin<&mut Backend>, json: &QString);
+
+        // ── The editor ──────────────────────────────────────────────────
+
+        /// Opens a translation: {source: [{index, url, w, h}], pages, caret, …}.
         #[qinvokable]
         #[cxx_name = "nativeOpen"]
         fn native_open(self: Pin<&mut Backend>, id: &QString) -> QString;
 
-        /// Saves and closes the native editing session.
+        /// Saves and closes the editing session.
         #[qinvokable]
         #[cxx_name = "nativeClose"]
         fn native_close(self: Pin<&mut Backend>);
@@ -101,6 +153,10 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "nativeIgnore"]
         fn native_ignore(self: Pin<&mut Backend>, pid: &QString, n: i32);
+
+        #[qinvokable]
+        #[cxx_name = "nativeAddWord"]
+        fn native_add_word(self: Pin<&mut Backend>, pid: &QString, n: i32);
 
         /// Opens the stored state again after edits from elsewhere; "null" if unchanged.
         #[qinvokable]
@@ -151,37 +207,22 @@ pub mod qobject {
         #[cxx_name = "nativePasteLink"]
         fn native_paste_link(self: Pin<&mut Backend>) -> QString;
 
+        /// Saves edits if there are any.
         #[qinvokable]
-        #[cxx_name = "nativeAddWord"]
-        fn native_add_word(self: Pin<&mut Backend>, pid: &QString, n: i32);
-
-        /// Proofing settings: {picky, dictionary}.
-        #[qinvokable]
-        #[cxx_name = "proofSettings"]
-        fn proof_settings(self: Pin<&mut Backend>) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "setProofSettings"]
-        fn set_proof_settings(self: Pin<&mut Backend>, picky: bool, dictionary: &QString);
+        #[cxx_name = "nativeSave"]
+        fn native_save(self: Pin<&mut Backend>);
 
         /// New proofing results are in.
         #[qsignal]
         #[cxx_name = "nativeIssuesChanged"]
         fn native_issues_changed(self: Pin<&mut Backend>);
 
-        /// The translation being edited natively was saved from elsewhere (sync, the web editor).
+        /// The translation being edited was saved from elsewhere (sync, a restore).
         #[qsignal]
         #[cxx_name = "nativeExternalChange"]
         fn native_external_change(self: Pin<&mut Backend>, id: QString);
 
-        /// Saves native edits if there are any.
-        #[qinvokable]
-        #[cxx_name = "nativeSave"]
-        fn native_save(self: Pin<&mut Backend>);
-
-        #[qinvokable]
-        #[cxx_name = "deleteProject"]
-        fn delete_project(self: Pin<&mut Backend>, id: &QString);
+        // ── Account ─────────────────────────────────────────────────────
 
         #[qinvokable]
         #[cxx_name = "signIn"]
@@ -208,6 +249,7 @@ pub mod qobject {
     impl cxx_qt::Initialize for Backend {}
 }
 
+use std::path::PathBuf;
 use std::pin::Pin;
 
 use cxx_qt::Threading;
@@ -215,13 +257,10 @@ use cxx_qt_lib::{QString, QUrl};
 use serde_json::{json, Value};
 
 use crate::app::app;
-use crate::sync;
+use crate::{native, projects, sync};
 
 #[derive(Default)]
 pub struct BackendRust {
-    editor_url: QString,
-    origin: QString,
-    data_dir: QString,
     sync_status: QString,
     sync_server: QString,
     sync_user: QString,
@@ -239,13 +278,9 @@ pub fn notify_issues() {
 }
 
 impl cxx_qt::Initialize for qobject::Backend {
-    fn initialize(mut self: Pin<&mut Self>) {
+    fn initialize(self: Pin<&mut Self>) {
         let _ = QT.set(self.qt_thread());
         let a = app();
-        self.as_mut().set_editor_url(QString::from(&a.editor_url()));
-        self.as_mut().set_origin(QString::from(&a.base));
-        self.as_mut().set_data_dir(QString::from(&a.data_dir.display().to_string()));
-
         // Any save, from the editor or from syncing, refreshes the list.
         let qt = self.qt_thread();
         let mut changes = a.state.changes.subscribe();
@@ -254,8 +289,8 @@ impl cxx_qt::Initialize for qobject::Backend {
             loop {
                 match changes.recv().await {
                     Ok(c) if c.user != uid => continue,
-                    // The translation being edited natively, saved from elsewhere.
-                    Ok(c) if c.origin.as_deref() != Some("native") && crate::native::current().as_deref() == Some(c.project.as_str()) => {
+                    // The translation being edited, saved from elsewhere.
+                    Ok(c) if c.origin.as_deref() != Some("native") && native::current().as_deref() == Some(c.project.as_str()) => {
                         let id = QString::from(&c.project);
                         let _ = qt.queue(move |o| o.native_external_change(id));
                     }
@@ -270,83 +305,163 @@ impl cxx_qt::Initialize for qobject::Backend {
                 }
             }
         });
-
         sync::attach(self);
     }
 }
 
-/// A language's own name, from the editor's table (web/js/langs.js).
-fn language_name(code: &str) -> Option<&'static str> {
-    static NAMES: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
-    let names = NAMES.get_or_init(|| {
-        include_str!("../../../web/js/langs.js")
-            .lines()
-            .filter_map(|l| {
-                let field = |key: &str| {
-                    let rest = &l[l.find(&format!("{key}: '"))? + key.len() + 3..];
-                    Some(&rest[..rest.find('\'')?])
-                };
-                Some((field("code")?, field("name")?))
-            })
-            .collect()
-    });
-    names.iter().find(|(c, _)| *c == code).map(|(_, n)| *n)
+fn path_of(url: &QUrl) -> Option<PathBuf> {
+    url.to_local_file().map(|s| PathBuf::from(s.to_string()))
+}
+
+fn s(v: &Value) -> QString {
+    QString::from(&v.to_string())
 }
 
 impl qobject::Backend {
+    // ── Translations ──────────────────────────────────────────────────
+
     fn projects(&self) -> QString {
         let a = app();
-        let list = a.db(|s| s.list_projects(&a.user)).unwrap_or_default();
+        let list = a.db(|st| st.list_projects(&a.user)).unwrap_or_default();
         let slim: Vec<Value> = list
             .iter()
             .map(|p| {
                 json!({
                     "id": p["id"], "name": p["name"], "fileName": p["fileName"],
                     "targetLang": p["targetLang"], "updatedAt": p["updatedAt"], "stats": p["stats"],
-                    "langName": p["targetLang"].as_str().and_then(language_name),
+                    "langName": p["targetLang"].as_str().and_then(projects::language_name),
                 })
             })
             .collect();
-        QString::from(&Value::Array(slim).to_string())
+        s(&Value::Array(slim))
     }
 
-    fn stage_file(self: Pin<&mut Self>, url: &QUrl) -> QString {
-        let path = url.to_local_file().map(|s| s.to_string()).unwrap_or_default();
-        let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        match std::fs::read(&path) {
-            Ok(bytes) => QString::from(&app().stage(name, bytes)),
+    fn languages(&self) -> QString {
+        s(&projects::languages())
+    }
+
+    fn import_file(self: Pin<&mut Self>, url: &QUrl, lang: &QString) -> QString {
+        let Some(path) = path_of(url) else { return QString::default() };
+        match projects::import(&path, &lang.to_string(), None) {
+            Ok(id) => QString::from(&id),
             Err(e) => {
-                self.message(QString::from(&format!("Could not read {path}: {e}")), true);
+                self.message(QString::from(&e.to_string()), true);
                 QString::default()
             }
         }
     }
 
-    fn native_open(self: Pin<&mut Self>, id: &QString) -> QString {
-        match crate::native::open(&id.to_string()) {
-            Ok(v) => QString::from(&v.to_string()),
+    fn pair_files(self: Pin<&mut Self>, original: &QUrl, translated: &QUrl, lang: &QString) -> QString {
+        let (Some(o), Some(t)) = (path_of(original), path_of(translated)) else { return QString::default() };
+        match projects::import(&o, &lang.to_string(), Some(&t)) {
+            Ok(id) => QString::from(&id),
             Err(e) => {
-                self.message(QString::from(&format!("Could not open the translation for editing: {e}")), true);
+                self.message(QString::from(&e.to_string()), true);
+                QString::default()
+            }
+        }
+    }
+
+    fn export_project(self: Pin<&mut Self>, id: &QString, sid: &QString, url: &QUrl) -> bool {
+        let Some(path) = path_of(url) else { return false };
+        let (id, sid) = (id.to_string(), sid.to_string());
+        let sid = (!sid.is_empty()).then_some(sid);
+        // What is being typed is part of the file; an export is kept as a version.
+        if native::current().as_deref() == Some(id.as_str()) && sid.is_none() {
+            let _ = native::add_version("download");
+        }
+        match projects::export(&id, sid.as_deref(), &path) {
+            Ok(()) => {
+                self.message(QString::from(&format!("Saved {}", path.display())), false);
+                true
+            }
+            Err(e) => {
+                self.message(QString::from(&format!("Could not export: {e}")), true);
+                false
+            }
+        }
+    }
+
+    fn export_name(&self, id: &QString, version_time: f64) -> QString {
+        QString::from(&projects::export_name(&id.to_string(), (version_time > 0.0).then_some(version_time as i64)))
+    }
+
+    fn delete_project(self: Pin<&mut Self>, id: &QString) {
+        let a = app();
+        let id = id.to_string();
+        let pid = id.clone();
+        match a.db(|st| st.delete_project(&a.user, &pid)) {
+            Ok(()) => a.state.notify(babel_server::Change { user: a.user.id, project: id, rev: 0, origin: None, deleted: true }),
+            Err(e) => self.message(QString::from(&format!("Could not delete: {e}")), true),
+        }
+    }
+
+    // ── Versions and settings ─────────────────────────────────────────
+
+    fn versions(&self, id: &QString) -> QString {
+        s(&projects::versions(&id.to_string()))
+    }
+
+    fn add_version(self: Pin<&mut Self>, name: &QString) {
+        let n = name.to_string();
+        let reason = if n.trim().is_empty() { "saved by you".to_owned() } else { n.trim().to_owned() };
+        if let Err(e) = native::add_version(&reason) {
+            self.message(QString::from(&format!("Could not keep a version: {e}")), true);
+        }
+    }
+
+    fn restore_version(self: Pin<&mut Self>, id: &QString, sid: &QString) {
+        let _ = native::save();
+        let stats = native::stats();
+        match projects::restore(&id.to_string(), &sid.to_string(), stats) {
+            Ok(()) => self.message(QString::from("Version restored."), false),
+            Err(e) => self.message(QString::from(&format!("Could not restore: {e}")), true),
+        }
+    }
+
+    fn set_language(self: Pin<&mut Self>, code: &QString) {
+        if let Err(e) = native::set_language(&code.to_string()) {
+            self.message(QString::from(&format!("Could not change the language: {e}")), true);
+        }
+    }
+
+    fn settings(&self) -> QString {
+        s(&native::settings())
+    }
+
+    fn set_settings(self: Pin<&mut Self>, json: &QString) {
+        if let Ok(v) = serde_json::from_str::<Value>(&json.to_string()) {
+            native::set_settings(v);
+        }
+    }
+
+    // ── The editor ────────────────────────────────────────────────────
+
+    fn native_open(self: Pin<&mut Self>, id: &QString) -> QString {
+        match native::open(&id.to_string()) {
+            Ok(v) => s(&v),
+            Err(e) => {
+                self.message(QString::from(&format!("Could not open the translation: {e}")), true);
                 QString::from("null")
             }
         }
     }
 
     fn native_close(self: Pin<&mut Self>) {
-        crate::native::close();
+        native::close();
     }
 
     fn native_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64, extend: bool) -> QString {
-        QString::from(&crate::native::click(page.max(0) as usize, x as f32, y as f32, extend).to_string())
+        s(&native::click(page.max(0) as usize, x as f32, y as f32, extend))
     }
 
     fn native_word(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
-        QString::from(&crate::native::select_word(page.max(0) as usize, x as f32, y as f32).to_string())
+        s(&native::select_word(page.max(0) as usize, x as f32, y as f32))
     }
 
     fn native_key(self: Pin<&mut Self>, key: i32, text: &QString, modifiers: i32) -> QString {
         match babel_editor::Key::from_qt(key, &text.to_string(), modifiers) {
-            Some(k) => QString::from(&crate::native::key(k, modifiers & 0x0200_0000 != 0).to_string()),
+            Some(k) => s(&native::key(k, modifiers & 0x0200_0000 != 0)),
             None => QString::from("null"),
         }
     }
@@ -356,11 +471,11 @@ impl qobject::Backend {
         if t.is_empty() {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(babel_editor::Key::Text(t), false).to_string())
+        s(&native::key(babel_editor::Key::Text(t), false))
     }
 
     fn native_copy(self: Pin<&mut Self>, cut: bool) -> QString {
-        let text = crate::native::selected_text();
+        let text = native::selected_text();
         if text.is_empty() {
             return QString::from("null");
         }
@@ -368,7 +483,7 @@ impl qobject::Backend {
         if !cut {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(babel_editor::Key::Delete, false).to_string())
+        s(&native::key(babel_editor::Key::Delete, false))
     }
 
     fn native_paste(self: Pin<&mut Self>) -> QString {
@@ -376,35 +491,43 @@ impl qobject::Backend {
         if t.is_empty() {
             return QString::from("null");
         }
-        QString::from(&crate::native::key(babel_editor::Key::Text(t), false).to_string())
+        s(&native::key(babel_editor::Key::Text(t), false))
     }
 
     fn native_issues(self: Pin<&mut Self>) -> QString {
-        QString::from(&crate::native::issues().to_string())
+        s(&native::issues())
     }
 
     fn native_apply(self: Pin<&mut Self>, pid: &QString, n: i32, value: &QString) -> QString {
-        QString::from(&crate::native::apply_suggestion(&pid.to_string(), n.max(0) as usize, &value.to_string()).to_string())
+        s(&native::apply_suggestion(&pid.to_string(), n.max(0) as usize, &value.to_string()))
     }
 
     fn native_ignore(self: Pin<&mut Self>, pid: &QString, n: i32) {
-        crate::native::ignore(&pid.to_string(), n.max(0) as usize);
+        native::ignore(&pid.to_string(), n.max(0) as usize);
+    }
+
+    fn native_add_word(self: Pin<&mut Self>, pid: &QString, n: i32) {
+        native::add_to_dictionary(&pid.to_string(), n.max(0) as usize);
+    }
+
+    fn native_reload(self: Pin<&mut Self>, id: &QString) -> QString {
+        s(&native::reload(&id.to_string()))
     }
 
     fn native_source_click(self: Pin<&mut Self>, page: i32, x: f64, y: f64, extend: bool) -> QString {
-        QString::from(&crate::native::source_click(page.max(0) as usize, x as f32, y as f32, extend).to_string())
+        s(&native::source_click(page.max(0) as usize, x as f32, y as f32, extend))
     }
 
     fn native_source_word(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
-        QString::from(&crate::native::source_word(page.max(0) as usize, x as f32, y as f32).to_string())
+        s(&native::source_word(page.max(0) as usize, x as f32, y as f32))
     }
 
     fn native_source_menu(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
-        QString::from(&crate::native::source_menu(page.max(0) as usize, x as f32, y as f32).to_string())
+        s(&native::source_menu(page.max(0) as usize, x as f32, y as f32))
     }
 
     fn native_copy_link(mut self: Pin<&mut Self>) -> QString {
-        match crate::native::copy_source_link() {
+        match native::copy_source_link() {
             Some(clip) => {
                 qobject::babel_clipboard_set(&QString::from(&clip));
                 self.as_mut().message(QString::from(&format!("Link copied: {clip}")), false);
@@ -419,65 +542,34 @@ impl qobject::Backend {
     }
 
     fn native_copy_source(self: Pin<&mut Self>) {
-        let t = crate::native::source_selected_text();
+        let t = native::source_selected_text();
         if !t.is_empty() {
             qobject::babel_clipboard_set(&QString::from(&t));
         }
     }
 
     fn native_copy_original(self: Pin<&mut Self>) {
-        if let Some(t) = crate::native::original_text() {
+        if let Some(t) = native::original_text() {
             qobject::babel_clipboard_set(&QString::from(&t));
         }
     }
 
     fn native_revert(self: Pin<&mut Self>) -> QString {
-        QString::from(&crate::native::revert().to_string())
+        s(&native::revert())
     }
 
     fn native_paste_link(self: Pin<&mut Self>) -> QString {
         let clip = qobject::babel_clipboard_text().to_string();
-        QString::from(&crate::native::paste_link(&clip).to_string())
-    }
-
-    fn native_add_word(self: Pin<&mut Self>, pid: &QString, n: i32) {
-        crate::native::add_to_dictionary(&pid.to_string(), n.max(0) as usize);
-    }
-
-    fn proof_settings(self: Pin<&mut Self>) -> QString {
-        QString::from(&crate::native::settings().to_string())
-    }
-
-    fn set_proof_settings(self: Pin<&mut Self>, picky: bool, dictionary: &QString) {
-        let words: Vec<String> = dictionary.to_string().lines().map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).collect();
-        crate::native::set_settings(picky, words);
-    }
-
-    fn native_reload(self: Pin<&mut Self>, id: &QString) -> QString {
-        QString::from(&crate::native::reload(&id.to_string()).to_string())
+        s(&native::paste_link(&clip))
     }
 
     fn native_save(self: Pin<&mut Self>) {
-        if let Err(e) = crate::native::save() {
+        if let Err(e) = native::save() {
             self.message(QString::from(&format!("Could not save: {e}")), true);
         }
     }
 
-    fn delete_project(self: Pin<&mut Self>, id: &QString) {
-        let a = app();
-        let id = id.to_string();
-        let pid = id.clone();
-        match a.db(|s| s.delete_project(&a.user, &pid)) {
-            Ok(()) => a.state.notify(babel_server::Change {
-                user: a.user.id,
-                project: id,
-                rev: 0,
-                origin: None,
-                deleted: true,
-            }),
-            Err(e) => self.message(QString::from(&format!("Could not delete: {e}")), true),
-        }
-    }
+    // ── Account ───────────────────────────────────────────────────────
 
     fn sign_in(self: Pin<&mut Self>, server: &QString, user: &QString, password: &QString) {
         sync::sign_in(self, server.to_string(), user.to_string(), password.to_string());
@@ -492,4 +584,4 @@ impl qobject::Backend {
     }
 }
 
-pub use qobject::{babel_exit_on_load_failure, babel_init_style, babel_init_webengine, Backend};
+pub use qobject::{babel_exit_on_load_failure, babel_init_style, Backend};

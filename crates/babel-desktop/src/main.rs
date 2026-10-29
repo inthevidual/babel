@@ -1,9 +1,11 @@
-//! Babel for the desktop: a Kirigami window around the translation editor,
-//! working on this computer and syncing with a Babel server when signed in.
+//! Babel for the desktop: a Kirigami app translating Word documents side by
+//! side on Babel's own pages (babel-editor), working on this computer and
+//! syncing with a Babel server when signed in.
 
 mod app;
 mod bridge;
 mod native;
+mod projects;
 mod sync;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
@@ -16,7 +18,6 @@ fn main() -> anyhow::Result<()> {
         .init();
     app::App::start()?;
 
-    bridge::babel_init_webengine();
     let mut gui = QGuiApplication::new();
     if let Some(mut g) = gui.as_mut() {
         g.as_mut().set_application_name(&QString::from("babel"));

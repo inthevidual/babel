@@ -40,8 +40,42 @@ Kirigami.Page {
     property bool syncing: false
 
     readonly property real pxPerPt: zoom * 96 / 72
+    property bool showMarks: true
+    property string targetLang: ""
 
-    title: projectName ? projectName + " — native layout" : "Native layout"
+    signal exportRequested(string id)
+    signal versionsRequested(string id)
+    signal languageRequested(string current)
+    signal settingsRequested()
+    signal helpRequested()
+
+    function languageChanged(code) {
+        targetLang = code;
+        refreshIssues();
+    }
+
+    function settingsChanged(s) {
+        showMarks = s.marks;
+        proofing = s.proof;
+        refreshIssues();
+    }
+
+    // After a version was restored: carry on from it.
+    function reloadSoon() {
+        reloadTimer.start();
+    }
+
+    Timer {
+        id: reloadTimer
+        interval: 300
+        onTriggered: {
+            const r = Backend.nativeReload(page.projectId);
+            if (r !== "null")
+                page.answer(r, false);
+        }
+    }
+
+    title: projectName || "Translation"
     padding: 0
 
     function load(id, name) {
@@ -53,10 +87,15 @@ Kirigami.Page {
         target.clear();
         const r = JSON.parse(Backend.nativeOpen(id));
         editing = !!r;
+        const st = JSON.parse(Backend.settings());
+        showMarks = st.marks;
         if (r) {
+            if (!projectName && r.name)
+                projectName = r.name;
+            targetLang = r.targetLang || "";
             for (const p of r.source)
                 source.append(p);
-            proofing = r.proofing;
+            proofing = r.proofing && st.proof;
             r.all = true;
             answer(JSON.stringify(r), false);
             unsaved = false;
@@ -280,10 +319,42 @@ Kirigami.Page {
             onTriggered: page.zoom = Math.min(3, page.zoom * 1.2)
         },
         Kirigami.Action {
-            icon.name: "tools-check-spelling"
-            text: "Proofing Settings…"
+            icon.name: "document-export"
+            text: "Export .docx…"
+            displayHint: Kirigami.DisplayHint.KeepVisible
+            onTriggered: {
+                Backend.nativeSave();
+                page.unsaved = false;
+                page.exportRequested(page.projectId);
+            }
+        },
+        Kirigami.Action {
+            icon.name: "view-history"
+            text: "Versions…"
             displayHint: Kirigami.DisplayHint.AlwaysHide
-            onTriggered: proofDialog.openWith(JSON.parse(Backend.proofSettings()))
+            onTriggered: {
+                Backend.nativeSave();
+                page.unsaved = false;
+                page.versionsRequested(page.projectId);
+            }
+        },
+        Kirigami.Action {
+            icon.name: "languages"
+            text: "Target Language…"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: page.languageRequested(page.targetLang)
+        },
+        Kirigami.Action {
+            icon.name: "configure"
+            text: "Settings…"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: page.settingsRequested()
+        },
+        Kirigami.Action {
+            icon.name: "help-contents"
+            text: "Keys and Help"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: page.helpRequested()
         }
     ]
 
@@ -488,7 +559,7 @@ Kirigami.Page {
 
                     // Edited (blue) and done (green) paragraphs, beside them.
                     Repeater {
-                        model: page.marks.filter(m => m.page === tpage.index)
+                        model: page.showMarks ? page.marks.filter(m => m.page === tpage.index) : []
                         Rectangle {
                             required property var modelData
                             x: modelData.x * page.pxPerPt - 9 * page.pxPerPt
@@ -737,40 +808,6 @@ Kirigami.Page {
                         page.refreshIssues();
                         ime.forceActiveFocus();
                     }
-                }
-            }
-        }
-    }
-
-    Kirigami.Dialog {
-        id: proofDialog
-        title: "Proofing"
-        preferredWidth: Kirigami.Units.gridUnit * 22
-        padding: Kirigami.Units.largeSpacing
-        standardButtons: Kirigami.Dialog.Ok | Kirigami.Dialog.Cancel
-        function openWith(s) {
-            picky.checked = !!s.picky;
-            words.text = (s.dictionary || []).join("\n");
-            open();
-        }
-        onAccepted: Backend.setProofSettings(picky.checked, words.text)
-        ColumnLayout {
-            QQC2.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                text: "Edited paragraphs are checked with LanguageTool's free service. Words also in the original paragraph are never flagged."
-            }
-            QQC2.CheckBox {
-                id: picky
-                text: "Picky mode (more style suggestions)"
-            }
-            QQC2.Label { text: "Personal dictionary, one word a line:" }
-            QQC2.ScrollView {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 8
-                QQC2.TextArea {
-                    id: words
-                    wrapMode: TextEdit.NoWrap
                 }
             }
         }

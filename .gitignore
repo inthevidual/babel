@@ -4,3 +4,6 @@
 *.db-wal
 .qmlls.ini
 /web/wasm/
+/packaging/arch/*
+!/packaging/arch/PKGBUILD
+!/packaging/arch/.SRCINFO

@@ -7,7 +7,8 @@ import se.cptjanst.babel
 Kirigami.ScrollablePage {
     id: page
 
-    signal openRequested(string id)
+    signal openRequested(string id, string name)
+    signal pairRequested()
     signal importRequested()
     signal fileDropped(url url)
     signal exportRequested(string id)
@@ -26,6 +27,12 @@ Kirigami.ScrollablePage {
             icon.name: Backend.signedIn ? "view-refresh" : "folder-cloud"
             enabled: !Backend.syncing
             onTriggered: Backend.signedIn ? Backend.syncNow() : page.accountRequested()
+        },
+        Kirigami.Action {
+            text: "Continue from a Translated File…"
+            icon.name: "document-import"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: page.pairRequested()
         },
         Kirigami.Action {
             text: "Account…"
@@ -112,7 +119,7 @@ Kirigami.ScrollablePage {
             required property double updated
 
             width: ListView.view.width
-            onClicked: page.openRequested(pid)
+            onClicked: page.openRequested(pid, name)
 
             contentItem: RowLayout {
                 spacing: Kirigami.Units.largeSpacing

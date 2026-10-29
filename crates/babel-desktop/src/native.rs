@@ -25,7 +25,13 @@ struct Native {
     src_versions: Vec<u32>,
     dir: PathBuf,
     unsaved_since: Option<Instant>,
+    /// For versions every few minutes of work, as the web editor makes them.
+    last_version: Instant,
+    changed_since_version: bool,
 }
+
+/// A version is kept after this much work.
+const VERSION_EVERY: Duration = Duration::from_secs(180);
 
 static NATIVE: Mutex<Option<Native>> = Mutex::new(None);
 
@@ -41,9 +47,16 @@ fn write_png(file: &std::path::Path, w: u32, h: u32, px: &[u8]) -> anyhow::Resul
     Ok(())
 }
 
-/// Proofing settings, kept on this computer: {picky, dictionary: [...]}.
+/// Settings, kept on this computer, as the web editor's: {proof, picky,
+/// dictionary: [...], endpoint, user, key, marks}.
 fn proof_settings() -> Value {
-    app().db(|s| s.get_kv("settings.proof")).ok().flatten().and_then(|r| serde_json::from_str(&r).ok()).unwrap_or_else(|| json!({ "picky": false, "dictionary": [] }))
+    let mut v: Value = app().db(|s| s.get_kv("settings.proof")).ok().flatten().and_then(|r| serde_json::from_str(&r).ok()).unwrap_or_else(|| json!({}));
+    for (k, d) in [("proof", json!(true)), ("picky", json!(false)), ("dictionary", json!([])), ("endpoint", json!(proof::ENDPOINT)), ("user", json!("")), ("key", json!("")), ("marks", json!(true))] {
+        if v.get(k).is_none() {
+            v[k] = d;
+        }
+    }
+    v
 }
 
 fn save_proof_settings(v: &Value) {
@@ -152,6 +165,7 @@ fn stored(id: &str, rev: Option<i64>) -> anyhow::Result<Opened> {
 /// Opens the translation for editing and draws every page of both documents.
 pub fn open(id: &str) -> anyhow::Result<Value> {
     let (docx, source, translated, rev, meta) = stored(id, None)?;
+    let translated_is_empty = translated.is_empty();
     let mut editor = Editor::open(docx, source, translated, &meta)?;
     let settings = proof_settings();
     editor.set_proofing(
@@ -161,18 +175,26 @@ pub fn open(id: &str) -> anyhow::Result<Value> {
     let dir = runtime_dir().join(id);
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
-    let mut s = Native { project: id.to_owned(), editor, rev, versions: vec![], src_versions: vec![], dir, unsaved_since: None };
+    let had_work = !translated_is_empty;
+    let mut s = Native { project: id.to_owned(), editor, rev, versions: vec![], src_versions: vec![], dir, unsaved_since: None, last_version: Instant::now(), changed_since_version: false };
     let source = s.source_json()?;
     let (_, pages) = s.redraw();
     // Ids given on opening are saved with the next save, not as an edit now.
     s.unsaved_since = None;
-    let proofing = s.editor.proof.lang.is_some();
+    let proofing = s.editor.proof.lang.is_some() && settings["proof"].as_bool().unwrap_or(true);
     let mut v = s.editor.state();
     v["pages"] = json!(pages);
     v["source"] = json!(source);
     v["marks"] = s.editor.marks();
     v["proofing"] = json!(proofing);
+    v["name"] = meta["name"].clone();
+    v["targetLang"] = meta["targetLang"].clone();
+    let stats = s.editor.stats();
     *NATIVE.lock().unwrap() = Some(s);
+    // A version at the start of each working session, if there is work to keep.
+    if had_work {
+        let _ = crate::projects::add_version(id, "session start", stats);
+    }
     if proofing {
         start_proofing(id.to_owned());
     }
@@ -297,9 +319,11 @@ pub fn settings() -> Value {
     proof_settings()
 }
 
-pub fn set_settings(picky: bool, dictionary: Vec<String>) {
-    let v = json!({ "picky": picky, "dictionary": dictionary });
+/// Replaces the settings (the dialog's: {proof, picky, dictionary, endpoint, user, key, marks}).
+pub fn set_settings(v: Value) {
     save_proof_settings(&v);
+    let picky = v["picky"].as_bool().unwrap_or(false);
+    let dictionary: Vec<String> = v["dictionary"].as_array().map(|d| d.iter().filter_map(|w| w.as_str().map(str::to_owned)).collect()).unwrap_or_default();
     with(|s| {
         s.editor.set_proofing(picky, dictionary);
         // Everything edited is checked again with the new settings.
@@ -307,6 +331,29 @@ pub fn set_settings(picky: bool, dictionary: Vec<String>) {
         s.editor.proof.issues.clear();
         s.editor.proof.queue.extend(ids);
     }, ());
+}
+
+/// Changes the target language of the translation being edited.
+pub fn set_language(lang: &str) -> anyhow::Result<()> {
+    let id = current().ok_or_else(|| anyhow::anyhow!("no translation is open"))?;
+    crate::projects::set_language(&id, lang)?;
+    with(|s| s.editor.set_language(lang), ());
+    Ok(())
+}
+
+/// Saves, then keeps the stored translation as a version.
+pub fn add_version(reason: &str) -> anyhow::Result<()> {
+    save()?;
+    let (id, stats) = with(|s| (Some(s.project.clone()), s.editor.stats()), (None, Value::Null));
+    let Some(id) = id else { return Ok(()) };
+    crate::projects::add_version(&id, reason, stats)?;
+    with(|s| { s.last_version = Instant::now(); s.changed_since_version = false; }, ());
+    Ok(())
+}
+
+/// The stats of the translation being edited (for versions made elsewhere).
+pub fn stats() -> Value {
+    with(|s| s.editor.stats(), Value::Null)
 }
 
 pub fn issues() -> Value {
@@ -320,18 +367,28 @@ fn start_proofing(project: String) {
         let mut backoff = Duration::ZERO;
         loop {
             tokio::time::sleep(Duration::from_millis(400)).await;
-            let (batch, form) = {
+            let settings = proof_settings();
+            if !settings["proof"].as_bool().unwrap_or(true) {
+                continue;
+            }
+            let (batch, mut form) = {
                 let mut g = NATIVE.lock().unwrap();
                 let Some(s) = g.as_mut().filter(|s| s.project == project) else { return };
                 match s.editor.proof_batch() {
                     Some(b) => {
-                        let form = s.editor.proof.request(&b);
+                        let form: Vec<(&str, String)> = s.editor.proof.request(&b);
                         (b, form)
                     }
                     None => continue,
                 }
             };
-            let res = http.post(format!("{}/v2/check", proof::ENDPOINT)).form(&form).header("Accept", "application/json").send().await;
+            let (user, key) = (settings["user"].as_str().unwrap_or(""), settings["key"].as_str().unwrap_or(""));
+            if !user.is_empty() && !key.is_empty() {
+                form.push(("username", user.to_owned()));
+                form.push(("apiKey", key.to_owned()));
+            }
+            let endpoint = settings["endpoint"].as_str().filter(|e| !e.trim().is_empty()).unwrap_or(proof::ENDPOINT).trim_end_matches('/').to_owned();
+            let res = http.post(format!("{endpoint}/v2/check")).form(&form).header("Accept", "application/json").send().await;
             let outcome: Result<Vec<Value>, (Duration, String)> = match res {
                 Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                     Ok(v) => Ok(v["matches"].as_array().cloned().unwrap_or_default()),
@@ -382,6 +439,14 @@ pub fn save() -> anyhow::Result<bool> {
     let saved = a.db(|st| st.save_parts(&a.user, &id, base, Some(&meta), &dirty, Some("native")))?;
     s.rev = saved.rev;
     s.unsaved_since = None;
+    s.changed_since_version = true;
+    if s.last_version.elapsed() > VERSION_EVERY {
+        let stats = s.editor.stats();
+        if crate::projects::add_version(&id, "auto", stats).is_ok() {
+            s.last_version = Instant::now();
+            s.changed_since_version = false;
+        }
+    }
     if saved.merged {
         // Edits from another device came in meanwhile and were merged in the
         // store: carry on from the merged state, or the next save would put

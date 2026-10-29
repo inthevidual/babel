@@ -26,19 +26,18 @@ crates/babel-wasm     babel-editor for the browser (WebAssembly)
 crates/babel-core     storage (SQLite) and the paragraph merge
 crates/babel-server   HTTP API + the web app (embedded), accounts
 crates/babel-sync     syncing a local store with a server account
-crates/babel-desktop  the Kirigami app (cxx-qt), runs babel-server's API on localhost
+crates/babel-desktop  the Kirigami app (cxx-qt): babel-editor natively, the local store, sync
 web/                  the editor: HTML/CSS/JS, no build step
 ```
 
-The editor (`web/`) is one codebase. `web/js/store.js` decides where it keeps
-translations: in IndexedDB when it is served as static files, or behind the
-HTTP API when a Babel server serves it — `babel-server` for the web, or the
-desktop app's own copy of the same server, bound to `127.0.0.1` over the
-computer's local database. The desktop app's list of translations, file
-dialogs, export dialog, account and sync are native (QML/Kirigami, with the
-logic in Rust); the two document panels are the editor in a QtWebEngine view,
-because faithful page layout of a Word document is what docx-preview and the
-browser engine provide and Qt's text engine does not.
+There is one editor, `babel-editor` (Rust), laid out by WordCraft's engine:
+natively in the desktop app, in WebAssembly in the browser. The web app
+(`web/`) wraps it: `web/js/store.js` keeps translations in IndexedDB when the
+page is served as static files, or behind the HTTP API when `babel-server`
+serves it. The desktop app is native throughout (QML/Kirigami, with the logic
+in Rust): it keeps translations in the same SQLite store on the computer,
+imports and exports `.docx` files itself (`babel-docx`, held to the web app's
+JavaScript), and syncs with a server account. It has no web engine.
 
 ## The model
 
@@ -98,7 +97,7 @@ for both platforms:
   brotli, built into `web/wasm/` by `make wasm`), drawn on canvases by
   `web/js/wasm-view.js`, with the fonts in `web/fonts/` given to it;
 - in the desktop app it is native Rust, drawn into the Kirigami window
-  (**Native Layout** on the editor page).
+  (opening a translation goes straight to it).
 
 It is the web editor's default; Settings › *Use the classic editor* goes back
 to docx-preview and contenteditable, and a build without `web/wasm/` falls
@@ -237,21 +236,23 @@ bar shows the active paragraph.
 
 ## Build and run
 
-Needs Rust, Qt 6 (base, declarative, webengine), Kirigami 6, the Rust
-WebAssembly target and wasm-bindgen, and `make`. On Arch: `pacman -S rust
-rust-wasm wasm-bindgen qt6-webengine kirigami qqc2-desktop-style`.
-`make wasm` builds the browser editor into `web/wasm/` (the desktop and server
-builds do it first: they embed `web/`).
+Needs Rust, Qt 6 (base, declarative), Kirigami 6 and `make`; for the web
+app also the Rust WebAssembly target and wasm-bindgen. On Arch: `pacman -S
+rust qt6-declarative kirigami qqc2-desktop-style` (+ `rust-wasm
+wasm-bindgen`). `make wasm` builds the browser editor into `web/wasm/`; the
+server build does it first, since it embeds `web/`.
 
 ```
 make install            # babel-desktop into ~/.local (PREFIX=/usr with sudo)
 babel-desktop           # or Babel in the application menu; opens .docx from Dolphin
 ```
 
-The desktop app keeps its data in `~/.local/share/babel/` and serves the
-editor on `127.0.0.1:47917` (a fixed port, because the recovery journal lives
-in that origin's storage). `babel-desktop FILE.docx` opens a document;
-`--project=ID` opens a translation.
+The desktop app keeps its data in `~/.local/share/babel/`.
+`babel-desktop FILE.docx` opens a document (asking for the language, or with
+`--lang=sv-SE` without asking); `--project=ID` opens a translation. It saves
+a second after typing stops, and keeps versions as the web editor does
+(every few minutes of work, at the start of each session, on export, before
+a restore).
 
 Server:
 
@@ -298,8 +299,6 @@ BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/sync.mjs
   moves whole to the next page (both panels alike).
 - Sync conflicts are resolved per paragraph, newest save wins; the other
   text is in Versions, not shown side by side.
-- The settings, versions and help dialogs are still the editor's own (web)
-  dialogs inside the desktop window.
 - With Babel's layout engine, page breaks are its own (WordCraft's estimate
   is about 55 % of the way to Word's rules); the classic editor shows Word's
   recorded breaks instead.

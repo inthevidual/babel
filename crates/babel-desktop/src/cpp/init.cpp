@@ -6,12 +6,6 @@
 #include <QtCore/QtGlobal>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuickControls2/QQuickStyle>
-#include <QtWebEngineQuick/QtWebEngineQuick>
-
-void babel_init_webengine()
-{
-    QtWebEngineQuick::initialize();
-}
 
 void babel_init_style()
 {

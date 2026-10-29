@@ -8,7 +8,7 @@ BIN = target/release
 
 all: desktop server
 
-desktop: wasm
+desktop:
 	cargo build --release -p babel-desktop
 
 server: wasm
