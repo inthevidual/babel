@@ -1,20 +1,19 @@
-//! Spelling and grammar for the native editor, through LanguageTool, as the
-//! web editor does it (web/js/proof.js): only edited paragraphs, batched and
-//! paced for the free API's limits, with back-off; issue kinds and filters
-//! the same (words also in the original paragraph are no typos; issues
-//! ignored in the web editor stay ignored here, they share the project's
-//! `ignored` list).
+//! Spelling and grammar through LanguageTool, as web/js/proof.js does it:
+//! only edited paragraphs, batched for the free API's limits; issue kinds
+//! and filters the same (words also in the original paragraph are no typos;
+//! the personal dictionary; issues ignored for the translation, shared with
+//! the web editor through the project's `ignored` list). The request itself
+//! is the platform's: [`Proofing::request`] says what to send.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
 
 /// Characters per request (the free API takes 20 kB).
 const MAX_BATCH: usize = 12_000;
-/// Between requests (20 a minute at most).
-const MIN_INTERVAL: Duration = Duration::from_millis(3200);
+/// Milliseconds between requests (20 a minute at most).
+pub const MIN_INTERVAL_MS: u64 = 3200;
 pub const ENDPOINT: &str = "https://api.languagetool.org";
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,6 +40,10 @@ pub struct Proofing {
     pub source: HashMap<String, String>,
     /// `rule|word`, as the web editor stores them in the project.
     pub ignored: HashSet<String>,
+    /// Words never flagged as misspelt.
+    pub dictionary: HashSet<String>,
+    /// More style suggestions (LanguageTool's picky level).
+    pub picky: bool,
     pub status: String,
 }
 
@@ -150,7 +153,7 @@ impl Proofing {
                 let word = text[a..b].to_owned();
                 let kind = kind_of(&m["rule"]);
                 let rule = m["rule"]["id"].as_str().unwrap_or("").to_owned();
-                if kind == "spelling" && src.contains(&word.to_lowercase()) {
+                if kind == "spelling" && (src.contains(&word.to_lowercase()) || self.dictionary.contains(&word)) {
                     continue;
                 }
                 if self.ignored.contains(&format!("{rule}|{word}")) {
@@ -177,32 +180,16 @@ impl Proofing {
     }
 }
 
-pub enum Failure {
-    /// Rate limited or busy: try again later.
-    Busy,
-    Other(String),
-}
-
-/// One request to LanguageTool.
-pub async fn check(http: &reqwest::Client, lang: &str, text: &str) -> Result<Vec<Value>, Failure> {
-    let res = http
-        .post(format!("{ENDPOINT}/v2/check"))
-        .form(&[("text", text), ("language", lang), ("level", "default")])
-        .header("Accept", "application/json")
-        .send()
-        .await
-        .map_err(|e| Failure::Other(e.to_string()))?;
-    match res.status().as_u16() {
-        200 => {}
-        429 | 503 => return Err(Failure::Busy),
-        s => return Err(Failure::Other(format!("LanguageTool answered {s}"))),
+/// What to send to LanguageTool for a batch: form fields for `POST {endpoint}/v2/check`.
+impl Proofing {
+    pub fn request(&self, batch: &Batch) -> Vec<(&'static str, String)> {
+        let text = batch.items.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n\n");
+        vec![
+            ("text", text),
+            ("language", self.lang.clone().unwrap_or_default()),
+            ("level", if self.picky { "picky" } else { "default" }.to_owned()),
+        ]
     }
-    let v: Value = res.json().await.map_err(|e| Failure::Other(e.to_string()))?;
-    Ok(v["matches"].as_array().cloned().unwrap_or_default())
-}
-
-pub fn pace() -> Duration {
-    MIN_INTERVAL
 }
 
 #[cfg(test)]

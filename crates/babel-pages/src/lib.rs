@@ -48,6 +48,15 @@ pub fn renderable(original: &[u8], parts: &Parts) -> anyhow::Result<Vec<u8>> {
     Ok(zout.finish()?.into_inner())
 }
 
+/// A file in the package, as text.
+pub fn read_part(original: &[u8], path: &str) -> Option<String> {
+    let mut z = zip::ZipArchive::new(Cursor::new(original)).ok()?;
+    let mut f = z.by_name(path).ok()?;
+    let mut s = String::new();
+    f.read_to_string(&mut s).ok()?;
+    Some(s)
+}
+
 /// What Babel shows: the text as it reads with tracked changes accepted.
 pub fn options() -> LayoutOptions {
     LayoutOptions { hide_deleted: true, ..Default::default() }

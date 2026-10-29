@@ -19,7 +19,9 @@
 //! web editor), or a formatting change; each can be undone.
 
 use std::collections::{BTreeSet, HashMap};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use babel_docx::para::{find_paragraph, runs, RunKind};
 use babel_docx::{apply_paragraph, Info, Templates, Token};
@@ -568,9 +570,16 @@ impl Session {
         self.dirty.insert(snap.para.part.clone());
         self.edited.insert(snap.pid.clone());
         self.paras.insert(snap.pid.clone(), snap.para.clone());
-        let wp = self.doc.para_mut(snap.story, &snap.path).map_err(|e| EditError::Internal(e.to_string()))?;
-        *wp = snap.wc.clone();
-        wp.touch();
+        // Text edits keep the paragraph's structure; a link or a revert may not,
+        // so the paragraph is read back from the XML whenever its runs differ.
+        let same_runs = self.doc.para(snap.story, &snap.path).is_some_and(|p| p.run_sources.len() == snap.wc.run_sources.len());
+        if same_runs {
+            let wp = self.doc.para_mut(snap.story, &snap.path).map_err(|e| EditError::Internal(e.to_string()))?;
+            *wp = snap.wc.clone();
+            wp.touch();
+        } else {
+            self.reread()?;
+        }
         Ok((current, self.relayout()))
     }
 
@@ -600,6 +609,64 @@ impl Session {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    // ── Structural changes ────────────────────────────────────────────────
+
+    /// Puts `xml` in place of the paragraph at `pos` (a `w:p`: a link wrapped
+    /// around some of its runs, or the original's paragraph to revert to), with
+    /// other parts changed alongside (`extra`: a relationships part), and lays
+    /// the document out afresh. Undoable like any edit.
+    pub fn rewrite_paragraph(&mut self, pos: &Pos, xml: &str, extra: Parts) -> Result<Vec<usize>, EditError> {
+        let snap = self.snapshot(pos)?;
+        let pid = snap.pid.clone();
+        let part = snap.para.part.clone();
+        let doc_xml = self.parts.get_mut(&part).ok_or(EditError::NotEditable)?;
+        let range = find_paragraph(doc_xml, &pid).ok_or(EditError::NotEditable)?;
+        doc_xml.replace_range(range, xml);
+        self.dirty.insert(part);
+        for (path, x) in extra {
+            self.parts.insert(path.clone(), x);
+            self.dirty.insert(path);
+        }
+        self.edited.insert(pid.clone());
+        self.paras.remove(&pid);
+        self.reread()?;
+        self.record(snap, false, &Pos::new(pos.story, pos.path.clone(), 0));
+        Ok(self.relayout())
+    }
+
+    /// Reads the document again from the parts (after a structural change);
+    /// the layout cache keeps paragraphs that didn't change.
+    fn reread(&mut self) -> Result<(), EditError> {
+        let bytes = crate::renderable(&self.original, &self.parts).map_err(|e| EditError::Internal(e.to_string()))?;
+        self.doc = wordcraft_docx::read(&bytes).map_err(|e| EditError::Internal(e.to_string()))?;
+        self.paras.clear();
+        Ok(())
+    }
+
+    /// Replaces parts wholesale (the stored state changed elsewhere), keeping
+    /// nothing of the old editing state but the layout cache.
+    pub fn replace_parts(&mut self, parts: Parts) -> Result<Vec<usize>, EditError> {
+        self.parts = parts;
+        self.reread()?;
+        self.undo.clear();
+        self.redo.clear();
+        self.dirty.clear();
+        self.edited.clear();
+        let pages = self.relayout();
+        self.at.clear();
+        for (story, path) in self.layout.index.keys() {
+            if let Some(id) = self.doc.para(*story, path).and_then(|p| p.source.as_deref()) {
+                self.at.insert(id.to_owned(), (*story, path.clone()));
+            }
+        }
+        Ok(pages)
+    }
+
+    /// Marks a part changed so it is saved (ids given at open).
+    pub fn mark_dirty(&mut self, part: &str) {
+        self.dirty.insert(part.to_owned());
     }
 
     // ── Writing back ──────────────────────────────────────────────────────

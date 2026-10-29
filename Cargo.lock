@@ -305,6 +305,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "babel-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "babel-docx",
+ "babel-pages",
+ "serde",
+ "serde_json",
+ "web-time",
+ "wordcraft-doc",
+ "wordcraft-layout",
+]
+
+[[package]]
 name = "babel-pages"
 version = "0.1.0"
 dependencies = [
@@ -314,6 +328,7 @@ dependencies = [
  "quick-xml 0.42.0",
  "serde_json",
  "thiserror 2.0.21",
+ "web-time",
  "wordcraft-doc",
  "wordcraft-docx",
  "wordcraft-layout",

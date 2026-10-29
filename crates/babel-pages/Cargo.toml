@@ -12,6 +12,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 quick-xml = "0.42.0"
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
 thiserror = "2.0.21"
+web-time = "1.1.0"
 wordcraft-doc = { git = "https://github.com/inthevidual/wordcraft", rev = "edcff3ebc647ff62251f24e278747d9f139cc139", version = "0.12.0" }
 wordcraft-docx = { git = "https://github.com/inthevidual/wordcraft", rev = "edcff3ebc647ff62251f24e278747d9f139cc139", version = "0.12.0" }
 wordcraft-layout = { git = "https://github.com/inthevidual/wordcraft", rev = "edcff3ebc647ff62251f24e278747d9f139cc139", version = "0.12.0" }
