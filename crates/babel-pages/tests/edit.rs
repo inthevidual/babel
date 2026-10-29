@@ -2,7 +2,7 @@
 //! up in the runs Babel's web editor would put it in, and nothing else in the
 //! XML changes.
 
-use babel_pages::edit::{EditError, Piece, Session};
+use babel_pages::edit::{EditError, Session, Style};
 use wordcraft_doc::Pos;
 
 fn session() -> Session {
@@ -33,7 +33,8 @@ fn run_text(xml: &str, rid: &str) -> String {
 /// afresh, lays out the same text.
 fn consistent(s: &mut Session, pos: &Pos, pid: &str) {
     let pieces: String = s.pieces(pos).unwrap().iter().map(|p| match p {
-        Piece::Text { text, .. } | Piece::Atom { text, .. } | Piece::Fixed { text, .. } => text.clone(),
+        babel_pages::edit::Piece::Text { text, .. } | babel_pages::edit::Piece::Atom { text, .. } | babel_pages::edit::Piece::Fixed { text, .. } => text.clone(),
+        babel_pages::edit::Piece::Br { .. } => "\n".to_owned(),
     }).collect();
     assert_eq!(pieces, text_of(s, pos));
     let again = Session::open(s.original().to_vec(), s.parts.clone()).unwrap();
@@ -131,4 +132,113 @@ fn only_the_edited_paragraph_changes_in_the_part() {
     assert_eq!(before[r0.end..], after[r1.end..]);
     assert_eq!(s.take_dirty().keys().collect::<Vec<_>>(), ["word/document.xml"]);
     assert!(s.take_dirty().is_empty());
+}
+
+fn at(p: &Pos, off: usize) -> Pos {
+    Pos::new(p.story, p.path.clone(), off)
+}
+
+#[test]
+fn typing_over_a_selection_across_runs() {
+    let mut s = session();
+    let p = s.locate("document:2").unwrap();
+    // "report is confidential" spans the plain run and the bold one.
+    let (a, b) = (at(&p, "This ".len()), at(&p, "This report is confidential".len()));
+    assert_eq!(s.text_between(&a, &b), "report is confidential");
+    let (c, _) = s.replace(&a, &b, "X").unwrap();
+    assert_eq!(c.off, "This X".len());
+    let xml = para_xml(&s, "document:2");
+    assert_eq!(run_text(xml, "document:r2"), "This X");
+    assert!(xml.contains(r#"<w:r data-br="document:r3"><w:rPr><w:b/></w:rPr><w:t xml:space="preserve"/></w:r>"#), "the bold run is emptied, not removed: {xml}");
+    consistent(&mut s, &p, "document:2");
+}
+
+#[test]
+fn a_selection_may_not_take_a_note_reference_with_it() {
+    let mut s = session();
+    let pid = (0..40).map(|i| format!("document:{i}")).find(|id| s.locate(id).is_some_and(|p| text_of(&s, &p).starts_with("A footnote follows"))).unwrap();
+    let p = s.locate(&pid).unwrap();
+    let len = text_of(&s, &p).len();
+    assert_eq!(s.replace(&p, &at(&p, len), "x").unwrap_err(), EditError::Fixed);
+    let other = s.locate("document:2").unwrap();
+    assert_eq!(s.replace(&p, &other, "x").unwrap_err(), EditError::AcrossParagraphs);
+}
+
+#[test]
+fn shift_enter_and_multi_line_paste_make_line_breaks() {
+    let mut s = session();
+    let p = s.locate("document:2").unwrap();
+    let (c, _) = s.line_break(&at(&p, "This rep".len())).unwrap();
+    assert_eq!(c.off, "This rep\n".len());
+    let xml = para_xml(&s, "document:2");
+    assert!(xml.contains("<w:br/>"), "{xml}");
+    assert!(text_of(&s, &p).starts_with("This rep\nort is "));
+    consistent(&mut s, &p, "document:2");
+    let end = at(&p, text_of(&s, &p).len());
+    s.insert(&end, " Rad ett\r\nRad två").unwrap();
+    assert!(text_of(&s, &p).ends_with(" Rad ett\nRad två"));
+    assert_eq!(para_xml(&s, "document:2").matches("<w:br/>").count(), 2);
+    consistent(&mut s, &p, "document:2");
+}
+
+#[test]
+fn bold_italic_underline_toggle_on_a_selection() {
+    let mut s = session();
+    let p = s.locate("document:2").unwrap();
+    let (a, b) = (at(&p, "This ".len()), at(&p, "This report".len()));
+    assert!(!s.has_style(&a, Style::Bold));
+    s.toggle(&a, &b, Style::Bold).unwrap();
+    assert!(s.has_style(&a, Style::Bold));
+    let xml = para_xml(&s, "document:2").to_owned();
+    assert!(xml.contains(r#"<w:b/><w:bCs/></w:rPr><w:t xml:space="preserve">report</w:t>"#), "{xml}");
+    // "confidential" is bold already: toggling it turns bold off explicitly.
+    let (c, d) = (at(&p, "This report is ".len()), at(&p, "This report is confidential".len()));
+    s.toggle(&c, &d, Style::Bold).unwrap();
+    assert!(!s.has_style(&c, Style::Bold));
+    assert!(para_xml(&s, "document:2").contains(r#"<w:b w:val="0"/>"#));
+    s.toggle(&a, &b, Style::Underline).unwrap();
+    assert!(s.has_style(&a, Style::Underline));
+    consistent(&mut s, &p, "document:2");
+}
+
+#[test]
+fn undo_and_redo_restore_the_paragraph_exactly() {
+    let mut s = session();
+    let p = s.locate("document:4").unwrap();
+    let before = para_xml(&s, "document:4").to_owned();
+    // Typing is one step.
+    let mut c = at(&p, "Item".len());
+    for ch in "abc".chars() {
+        c = s.insert(&c, &ch.to_string()).unwrap().0;
+    }
+    // Deleting the tab after it is another.
+    s.delete(&c, 1).unwrap();
+    let edited = para_xml(&s, "document:4").to_owned();
+    assert!(!edited.contains("document:r13"));
+    let (c1, _) = s.undo().unwrap().unwrap();
+    assert!(para_xml(&s, "document:4").contains("document:r13"), "the tab is back");
+    assert_eq!(c1.off, "Itemabc".len());
+    s.undo().unwrap().unwrap();
+    assert_eq!(para_xml(&s, "document:4"), before, "back to the original, byte for byte");
+    assert!(s.undo().is_none());
+    s.redo().unwrap().unwrap();
+    s.redo().unwrap().unwrap();
+    assert_eq!(para_xml(&s, "document:4"), edited);
+    assert_eq!(text_of(&s, &p), "Itemabc" .to_owned() + "Amount\tShare");
+    consistent(&mut s, &p, "document:4");
+    // A new edit after undo drops the redo history.
+    s.undo().unwrap().unwrap();
+    s.insert(&at(&p, 0), "Z").unwrap();
+    assert!(s.redo().is_none());
+}
+
+#[test]
+fn words_and_line_ends() {
+    let s = session();
+    let p = s.locate("document:2").unwrap();
+    let (a, b) = s.word_at(&at(&p, "This rep".len()));
+    assert_eq!(s.text_between(&a, &b), "report");
+    let end = s.line_end(&at(&p, 2), true, 0);
+    assert!(end.off > 40, "the first line is long: {}", end.off);
+    assert_eq!(s.line_end(&at(&p, 20), false, 0).off, 0);
 }
