@@ -41,10 +41,18 @@ const tgtZoom = new V.Zoom($('#tgtPanel .sizer'), $('#tgtPanel .scaler'));
 
 // ── Routing ────────────────────────────────────────────────────────────────
 
+// One route change at a time: two overlapping opens of the same translation
+// would take its lock from each other.
+let routing = Promise.resolve();
+function route() {
+  routing = routing.then(routeNow, routeNow);
+  return routing;
+}
+
 addEventListener('hashchange', route);
 route();
 
-async function route() {
+async function routeNow() {
   if (S.backend.mode === 'server' && !S.backend.user) return showLogin();
   const m = location.hash.match(/^#p=([\w-]+)/);
   if (P && (!m || m[1] !== P.project.id)) await closeProject();
@@ -1707,4 +1715,22 @@ function fmtBytes(n) {
 }
 
 // Test hook (used by the automated browser tests).
+// The desktop app drives these from its own window: files picked in its
+// file dialog are fetched from its local server, and exports from its list.
+if (S.backend.mode === 'desktop') {
+  document.body.classList.add('desktop');
+  globalThis.babelDesktop = {
+    async openStaged(id, name) {
+      const res = await fetch(`api/desktop/staged/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      if (!res.ok) return toast('That file could not be opened.', 'error');
+      await closeProject();
+      history.replaceState(null, '', '#importing'); // tells the window to stay on the editor
+      showHome();
+      await startNew(new File([await res.arrayBuffer()], name));
+      if (!location.hash.startsWith('#p=')) location.hash = '';
+    },
+    download: id => downloadProject(id).catch(fatal),
+  };
+}
+
 globalThis.__babel = { get P() { return P; }, X, save, flushAll, snapshot };

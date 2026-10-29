@@ -1,0 +1,23 @@
+# /etc/systemd/system/babel-server.service
+# Accounts: sudo -u babel babel-server --db /var/lib/babel/babel.db user add NAME
+[Unit]
+Description=Babel translation server
+After=network.target
+
+[Service]
+User=babel
+Group=babel
+StateDirectory=babel
+Environment=BABEL_DB=/var/lib/babel/babel.db
+Environment=BABEL_LISTEN=127.0.0.1:8790
+# Behind HTTPS (see deploy/Caddyfile); drop this if served over plain HTTP.
+Environment=BABEL_SECURE_COOKIES=true
+ExecStart=/usr/local/bin/babel-server serve
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

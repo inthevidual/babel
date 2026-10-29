@@ -1,0 +1,8 @@
+# HTTPS in front of babel-server. Server-sent events need no buffering,
+# which Caddy does by default for text/event-stream.
+babel.example.org {
+	reverse_proxy 127.0.0.1:8790
+	request_body {
+		max_size 512MB
+	}
+}

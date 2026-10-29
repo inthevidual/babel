@@ -570,7 +570,12 @@ async fn api_not_found() -> ApiError {
 }
 
 pub fn router(state: AppState) -> Router {
-    let api = Router::new()
+    router_with(state, Router::new())
+}
+
+/// The router with extra API routes under `/api` (the desktop app's).
+pub fn router_with(state: AppState, extra_api: Router<AppState>) -> Router {
+    let api = extra_api
         .route("/config", get(config))
         .route("/login", post(login))
         .route("/logout", post(logout))

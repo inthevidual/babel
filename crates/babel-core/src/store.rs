@@ -677,19 +677,17 @@ impl Store {
                 params![id, rev, path, h],
             )?;
         }
-        let updated_at = meta
-            .and_then(|m| m.get("updatedAt"))
-            .and_then(Value::as_i64)
-            .unwrap_or(t);
+        // "Updated" is the editor's notion (it is in the metadata); a save
+        // without metadata (syncing) leaves it alone.
         match meta {
-            Some(m) => tx.execute(
-                "UPDATE projects SET rev = ?1, meta = ?2, updated_at = ?3 WHERE id = ?4",
-                params![rev, m.to_string(), updated_at, id],
-            )?,
-            None => tx.execute(
-                "UPDATE projects SET rev = ?1, updated_at = ?2 WHERE id = ?3",
-                params![rev, updated_at, id],
-            )?,
+            Some(m) => {
+                let updated_at = m.get("updatedAt").and_then(Value::as_i64).unwrap_or(t);
+                tx.execute(
+                    "UPDATE projects SET rev = ?1, meta = ?2, updated_at = ?3 WHERE id = ?4",
+                    params![rev, m.to_string(), updated_at, id],
+                )?
+            }
+            None => tx.execute("UPDATE projects SET rev = ?1 WHERE id = ?2", params![rev, id])?,
         };
         tx.execute(
             "DELETE FROM revisions WHERE project_id = ?1 AND rev <= ?2",

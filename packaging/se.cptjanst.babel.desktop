@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Babel
+GenericName=Document Translator
+Comment=Translate Word documents side by side, with the layout intact
+Exec=babel-desktop %f
+Icon=se.cptjanst.babel
+Terminal=false
+Categories=Office;WordProcessor;Qt;KDE;
+MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;
+Keywords=translate;translation;docx;word;
+StartupWMClass=babel-desktop

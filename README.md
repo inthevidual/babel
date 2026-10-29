@@ -1,12 +1,40 @@
 # Babel
 
-Side-by-side translation of Word documents: <https://babel.cptjanst.se>
+Side-by-side translation of Word documents.
 
 Open a `.docx`, pick the target language, and the right-hand panel becomes an
-editable copy of the original. Type over it paragraph by paragraph and download
+editable copy of the original. Type over it paragraph by paragraph and export
 a `.docx` that is the original file with the words changed: same styles,
 numbering, tables, images, headers, footers, footnotes, fields and section
-setup. Static site, no build step, nothing is uploaded anywhere.
+setup.
+
+Babel comes in three forms, all with the same editor:
+
+| | | Where translations are kept |
+|---|---|---|
+| **Desktop app** (`babel-desktop`) | A KDE/Kirigami window, Rust + Qt | On the computer; synced with a Babel server when signed in |
+| **Server** (`babel-server`) | The web app with accounts | On the server, per user |
+| **Static site** (<https://babel.cptjanst.se>) | No build step, nothing uploaded | In the browser (IndexedDB) |
+
+## Architecture
+
+```
+crates/babel-core     storage (SQLite) and the paragraph merge
+crates/babel-server   HTTP API + the web app (embedded), accounts
+crates/babel-sync     syncing a local store with a server account
+crates/babel-desktop  the Kirigami app (cxx-qt), runs babel-server's API on localhost
+web/                  the editor: HTML/CSS/JS, no build step
+```
+
+The editor (`web/`) is one codebase. `web/js/store.js` decides where it keeps
+translations: in IndexedDB when it is served as static files, or behind the
+HTTP API when a Babel server serves it — `babel-server` for the web, or the
+desktop app's own copy of the same server, bound to `127.0.0.1` over the
+computer's local database. The desktop app's list of translations, file
+dialogs, export dialog, account and sync are native (QML/Kirigami, with the
+logic in Rust); the two document panels are the editor in a QtWebEngine view,
+because faithful page layout of a Word document is what docx-preview and the
+browser engine provide and Qt's text engine does not.
 
 ## The model
 
@@ -62,18 +90,43 @@ Three layers, so no keystroke depends on one mechanism:
 | Layer | When | What |
 |---|---|---|
 | Journal | every edit, synchronously | the edited `w:p` in `localStorage` |
-| IndexedDB | ~1 s after typing stops (max 4 s) | full translated XML parts |
+| Store | ~1 s after typing stops (max 4 s) | full translated XML parts |
 | Versions | every 3 min of work, session start, download, restore | full snapshot, 60 kept |
 
-On open, the journal is replayed over IndexedDB, so an edit survives a crashed
-tab (tested by crashing the renderer). Restoring a version first saves the
-current state as a version. `navigator.storage.persist()` is requested so the
-browser does not evict the data. A Web Lock makes sure only one tab edits a
-translation; opening it in a second tab pauses the first.
+The store is IndexedDB on the static site and the server's (or the desktop
+app's) SQLite database otherwise. On open, the journal is replayed over the
+store, so an edit survives a crashed tab (tested by crashing the renderer).
+Restoring a version first saves the current state as a version. On the
+static site `navigator.storage.persist()` is requested so the browser does not
+evict the data. A Web Lock makes sure only one tab edits a translation;
+opening it in a second tab pauses the first.
 
-If browser storage is lost entirely: *Continue from a translated file* on the
+If storage is lost entirely: *Continue from a translated file* on the
 start page pairs the original with a downloaded translation (paragraph
 structure must match) and carries on.
+
+## Saving, merging and sync
+
+The server numbers every save of a project's translated parts (a revision)
+and keeps the last 100; part contents are stored once per distinct text,
+zstd-compressed. A save names the revision it started from. If another
+device saved since, the server merges **paragraph by paragraph**: Babel never
+splits or merges paragraphs, so every copy has the same paragraphs, each with
+a stable `data-bp` id. A paragraph changed on one side takes that side; one
+changed on both takes the newer save, and the state it overwrote is kept as a
+version ("before merging edits from another device"). Relationship parts
+(pasted links) merge per relationship. An editor with the translation open
+hears about other saves through server-sent events and reloads; unsaved
+edits are in its journal and replay on top.
+
+The desktop app syncs its local store with a server account
+(`crates/babel-sync`): after local saves, every 20 s, and on *Sync Now*. Each
+round uploads and downloads whole projects the other side has never seen,
+pushes local revisions (the changed parts, merged on the server as above) or
+pulls newer server ones, carries deletions both ways, metadata by most recent
+change, and versions as a union. It works offline and catches up when the
+server is reachable. The session token for the server is kept in the app's
+database, in a directory only the user can read.
 
 ## Proofing
 
@@ -83,9 +136,10 @@ free API's limits (20 requests and 75 kB per minute) with back-off on 429.
 Results are drawn with the CSS Custom Highlight API, so the editable DOM is
 never touched; the ranges are live and survive edits elsewhere in the
 paragraph. Clicking an underline shows suggestions, *Ignore* (per
-translation) and *Add to dictionary* (per browser). A Premium account or own
-server can be set in Settings. Proofing can be turned off; nothing else leaves
-the browser.
+translation) and *Add to dictionary* (per browser, or per desktop app). A Premium account or own
+server can be set in Settings. Proofing can be turned off. On the static site
+nothing else leaves the browser; otherwise translations go only to the Babel
+server serving the editor (and the one the desktop app syncs with).
 
 ## Context menu
 
@@ -121,28 +175,75 @@ bar shows the active paragraph.
 
 | | |
 |---|---|
-| `index.html` | markup |
-| `app.css` | interface; the documents are styled by docx-preview |
-| `js/main.js` | projects, rendering, write-back, saving, proofing UI, versions |
-| `js/ooxml.js` | package handling, normalisation, write-back, export |
-| `js/editor.js` | editing hosts, token reading, input guards, keyboard |
-| `js/view.js` | rendering, pagination, overflow, zoom |
-| `js/store.js` | IndexedDB, snapshots, journal |
-| `js/proof.js` | LanguageTool client |
-| `js/menu.js` | context menu |
-| `js/langs.js` | target languages (Word code ↔ LanguageTool code) |
-| `vendor/docx-preview.mjs` | docx-preview 0.3.7 with `BABEL PATCH` changes |
-| `vendor/jszip.min.js` | JSZip 3.10.1 |
-| `fonts/` | metric-compatible fonts + `fonts.css` |
+| `web/index.html` | markup |
+| `web/app.css` | interface; the documents are styled by docx-preview |
+| `web/js/main.js` | projects, rendering, write-back, saving, proofing UI, versions, sign-in |
+| `web/js/ooxml.js` | package handling, normalisation, write-back, export |
+| `web/js/editor.js` | editing hosts, token reading, input guards, keyboard |
+| `web/js/view.js` | rendering, pagination, overflow, zoom |
+| `web/js/store.js` | picks the backend; `store-idb.js` (IndexedDB), `store-http.js` (Babel API) |
+| `web/js/journal.js` | the synchronous localStorage journal |
+| `web/js/proof.js` | LanguageTool client |
+| `web/js/menu.js` | context menu |
+| `web/js/langs.js` | target languages (Word code ↔ LanguageTool code) |
+| `web/vendor/docx-preview.mjs` | docx-preview 0.3.7 with `BABEL PATCH` changes |
+| `web/vendor/jszip.min.js` | JSZip 3.10.1 |
+| `web/fonts/` | metric-compatible fonts + `fonts.css` |
+| `crates/babel-core/src/store.rs` | projects, revisions, versions, users, sessions |
+| `crates/babel-core/src/merge.rs` | three-way merge of OOXML parts by paragraph |
+| `crates/babel-server/src/lib.rs` | the HTTP API, sign-in, events, the embedded web app |
+| `crates/babel-sync/src/lib.rs` | the sync engine |
+| `crates/babel-desktop/src/` | app start-up and local server (`app.rs`), QML bridge (`bridge.rs`), account (`sync.rs`) |
+| `crates/babel-desktop/qml/` | the window: translations list, editor page, account dialog |
 | `test/make-fixture.py` | builds `test/fixtures/sample.docx` |
 | `test/e2e.mjs` | browser test: edit, format, breaks, guards, headers, overflow, proofing, reload, crash recovery, download, pairing |
+| `test/sync.mjs` | two signed-in browsers: live updates and merged simultaneous edits |
 
-## Run and test
+## Build and run
+
+Needs Rust, Qt 6 (base, declarative, webengine), Kirigami 6 and, for
+installing, `make`. On Arch: `pacman -S rust qt6-webengine kirigami
+qqc2-desktop-style`.
 
 ```
-python3 -m http.server 8790
+make install            # babel-desktop into ~/.local (PREFIX=/usr with sudo)
+babel-desktop           # or Babel in the application menu; opens .docx from Dolphin
+```
+
+The desktop app keeps its data in `~/.local/share/babel/` and serves the
+editor on `127.0.0.1:47917` (a fixed port, because the recovery journal lives
+in that origin's storage). `babel-desktop FILE.docx` opens a document;
+`--project=ID` opens a translation.
+
+Server:
+
+```
+cargo build --release -p babel-server
+babel-server --db babel.db user add NAME      # asks for the password
+babel-server --db babel.db serve --listen 127.0.0.1:8790
+```
+
+`deploy/` has a systemd unit and a Caddy config for HTTPS (use
+`--secure-cookies` there). Accounts: `user add|passwd|del|list`; a new
+password signs the user out everywhere.
+
+Static site: serve `web/` as files (`python3 -m http.server 8790` from `web/`).
+
+## Test
+
+```
+cargo test --workspace                 # store, merge, server-backed sync engine
 python3 test/make-fixture.py
-node test/e2e.mjs        # needs Playwright and Chrome
+
+# the editor on the static site
+(cd web && python3 -m http.server 8790) &
+node test/e2e.mjs                      # needs Playwright and Chrome (PLAYWRIGHT_DIR, CHROME)
+
+# the editor against babel-server, and two devices on one account
+babel-server --db /tmp/t.db user add tester    # password testpass123
+babel-server --db /tmp/t.db serve --listen 127.0.0.1:8791 &
+BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/e2e.mjs
+BASE=http://localhost:8791/ LOGIN=tester:testpass123 node test/sync.mjs
 ```
 
 ## Limits
@@ -154,8 +255,14 @@ node test/e2e.mjs        # needs Playwright and Chrome
   not editable. Comments are not shown.
 - Pagination is block-level: a paragraph that Word would break across pages
   moves whole to the next page (both panels alike).
+- Sync conflicts are resolved per paragraph, newest save wins; the other
+  text is in Versions, not shown side by side.
+- The settings, versions and help dialogs are still the editor's own (web)
+  dialogs inside the desktop window.
 
 ## Deploy
 
-Push to `main`; GitHub Pages serves the root. DNS is a DNS-only CNAME in the
-`cptjanst.se` Cloudflare zone → `inthevidual.github.io`.
+The static site: GitHub Pages serves `main`. Since the app moved into `web/`,
+Pages needs to publish that folder (a Pages workflow, or the `/docs`
+convention) — until then `main` keeps the old layout. DNS is a DNS-only CNAME
+in the `cptjanst.se` Cloudflare zone → `inthevidual.github.io`.
