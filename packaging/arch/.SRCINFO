@@ -1,0 +1,24 @@
+pkgbase = babel-desktop-git
+	pkgdesc = Translate Word documents side by side, with the layout intact (KDE desktop app)
+	pkgver = r10.65bb24b
+	pkgrel = 1
+	url = https://github.com/inthevidual/babel
+	arch = x86_64
+	license = LicenseRef-unknown
+	makedepends = cargo
+	makedepends = git
+	depends = qt6-base
+	depends = qt6-declarative
+	depends = qt6-webengine
+	depends = kirigami
+	depends = qqc2-desktop-style
+	depends = hicolor-icon-theme
+	depends = gcc-libs
+	depends = glibc
+	provides = babel-desktop
+	conflicts = babel-desktop
+	options = !lto
+	source = babel::git+https://github.com/inthevidual/babel.git#branch=native
+	sha256sums = SKIP
+
+pkgname = babel-desktop-git
