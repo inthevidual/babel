@@ -26,7 +26,7 @@ async function api(method, path, body, { raw = false } = {}) {
   if (res.status === 401) throw new AuthError('You are signed out. Sign in again to continue.');
   if (!res.ok) throw new Error((await res.text()) || `${res.status} ${res.statusText}`);
   if (raw) return res.arrayBuffer();
-  return res.status === 204 ? null : res.json();
+  return /json/.test(res.headers.get('content-type') ?? '') ? res.json() : null;
 }
 
 // The configuration if this page is served by a Babel server, else null.

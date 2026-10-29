@@ -2,6 +2,7 @@
 //   python3 -m http.server 8790   (from the repo root)
 //   node test/e2e.mjs
 // Uses Playwright from a sibling checkout or any installed copy (PLAYWRIGHT_DIR).
+// Against babel-server, set LOGIN=user:password and BASE to its address.
 
 import { createRequire } from 'module';
 import { execFileSync } from 'child_process';
@@ -26,6 +27,14 @@ page.on('pageerror', e => errors.push(e.message));
 page.on('console', m => { if (m.type() === 'error' && !/favicon|404|simulated crash/.test(m.text())) errors.push(m.text()); });
 
 await page.goto(BASE);
+if (process.env.LOGIN) {
+  const [user, pass] = process.env.LOGIN.split(/:(.*)/);
+  await page.waitForSelector('#loginForm', { state: 'visible' });
+  await page.fill('#loginUser', user);
+  await page.fill('#loginPass', pass);
+  await page.click('#loginForm button[type=submit]');
+  await page.waitForSelector('#home', { state: 'visible' });
+}
 await page.setInputFiles('#fileInput', fixture);
 await page.waitForSelector('#langDlg[open]');
 await page.fill('#langSearch', 'swed');
