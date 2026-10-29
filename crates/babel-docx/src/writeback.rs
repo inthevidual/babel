@@ -75,11 +75,16 @@ fn w_prefix(t: &Tree) -> String {
     "w".to_owned()
 }
 
-struct Ctx {
+/// Edits `w:rPr` children in schema order (shared with the link code).
+pub struct RprEditor {
     w: String,
 }
 
-impl Ctx {
+impl RprEditor {
+    pub fn new(w_prefix: &str) -> RprEditor {
+        RprEditor { w: w_prefix.to_owned() }
+    }
+
     fn is_w(&self, t: &Tree, id: Id, local: &str) -> bool {
         t.name(id).and_then(|n| n.strip_prefix(self.w.as_str())).and_then(|n| n.strip_prefix(':')) == Some(local)
     }
@@ -94,7 +99,7 @@ impl Ctx {
     }
 
     /// Inserts or replaces a `w:rPr` child in schema order (Word is strict about it).
-    fn set_rpr_child(&self, t: &mut Tree, rpr: Id, name: &str, attrs: &[(&str, &str)]) {
+    pub fn set_rpr_child(&self, t: &mut Tree, rpr: Id, name: &str, attrs: &[(&str, &str)]) {
         for c in t.elements(rpr) {
             if self.is_w(t, c, name) {
                 t.detach(c);
@@ -197,7 +202,7 @@ fn fmt_key(f: &Option<Map<String, Value>>) -> String {
 /// Rewrites the paragraph `xml` (one serialised `w:p`) from `tokens`.
 pub fn apply_paragraph(xml: &str, tokens: &[Token], info: &mut Info, templates: &mut Templates) -> Result<String, crate::tree::XmlError> {
     let mut t = Tree::parse(xml)?;
-    let cx = Ctx { w: w_prefix(&t) };
+    let cx = RprEditor { w: w_prefix(&t) };
     let p = t.root;
 
     // The paragraph's own runs (not those of nested text-box paragraphs).
