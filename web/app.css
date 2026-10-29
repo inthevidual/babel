@@ -119,6 +119,12 @@ button.icon { width: 32px; padding: 6px 0; font-weight: 700; }
 .drop strong { font-size: 17px; }
 .drop span { color: var(--muted); }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.login { display: grid; gap: 12px; max-width: 340px; }
+.login label { display: grid; gap: 4px; font-size: 13px; }
+.login input { width: 100%; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px 10px; font: inherit; }
+.login button { justify-self: start; }
+.login-error { margin: 0; color: var(--bad); font-size: 13px; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; }
 .resume { margin: 18px 0 0; }
 .resume summary { cursor: pointer; color: var(--accent); }
 .resume p { color: var(--muted); font-size: 13px; }

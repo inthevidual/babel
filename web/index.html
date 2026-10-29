@@ -43,6 +43,19 @@
   </div>
 </header>
 
+<main id="login" class="home" hidden>
+  <div class="home-inner">
+    <h1 class="wordmark">Babel</h1>
+    <p class="lede">Sign in to work on your translations. They are kept on this server, and the desktop app can sync with them.</p>
+    <form class="login" id="loginForm">
+      <label>User name <input type="text" id="loginUser" autocomplete="username" required></label>
+      <label>Password <input type="password" id="loginPass" autocomplete="current-password" required></label>
+      <p class="login-error" id="loginError" role="alert" hidden></p>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+  </div>
+</main>
+
 <main id="home" class="home" hidden>
   <div class="home-inner">
     <h1 class="wordmark">Babel</h1>
@@ -51,7 +64,7 @@
     <label class="drop" id="drop" tabindex="0">
       <input type="file" id="fileInput" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
       <strong>Open a Word document</strong>
-      <span>Drop a .docx here or click to choose. It never leaves this browser.</span>
+      <span id="dropHint">Drop a .docx here or click to choose. It never leaves this browser.</span>
     </label>
 
     <details class="resume">
@@ -65,12 +78,14 @@
     </details>
 
     <section class="recent" id="recent" hidden>
-      <h2>Translations in this browser</h2>
+      <h2 id="recentTitle">Translations in this browser</h2>
       <ul id="recentList"></ul>
       <p class="fine" id="storageNote"></p>
     </section>
 
-    <p class="fine privacy">Documents are kept in this browser’s storage only. When proofing is on, the text of edited paragraphs is sent to LanguageTool for spelling and grammar checks; you can turn that off in Settings.</p>
+    <p class="fine account" id="account" hidden>Signed in as <b id="accountName"></b> · <button type="button" class="link" id="btnLogout">Sign out</button></p>
+
+    <p class="fine privacy" id="privacyNote">Documents are kept in this browser’s storage only. When proofing is on, the text of edited paragraphs is sent to LanguageTool for spelling and grammar checks; you can turn that off in Settings.</p>
   </div>
 </main>
 

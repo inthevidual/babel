@@ -1,7 +1,8 @@
-// Persistence. Three layers, so that no keystroke depends on one mechanism:
-//   1. a synchronous localStorage journal of every paragraph as it is edited,
-//   2. IndexedDB with the full translated XML parts (debounced),
-//   3. IndexedDB snapshots — rolling versions that can be restored or downloaded.
+// Translations kept in this browser: IndexedDB holds the full translated XML
+// parts (debounced) and snapshots — rolling versions that can be restored or
+// downloaded. The synchronous journal in front of it is journal.js.
+
+import { journalClear } from './journal.js';
 
 const DB_NAME = 'babel';
 const DB_VERSION = 1;
@@ -133,39 +134,4 @@ export async function listSnapshots(id) {
 
 export async function getSnapshot(sid) {
   return result((await db()).transaction('snapshots').objectStore('snapshots').get(sid));
-}
-
-// ── Journal ────────────────────────────────────────────────────────────────
-// localStorage is synchronous, so an edit is on disk before the next frame
-// even if the tab is killed. Entries are cleared once IndexedDB has them.
-
-const jkey = id => `babel.journal.${id}`;
-
-export function journalRead(id) {
-  try { return JSON.parse(localStorage.getItem(jkey(id)) ?? 'null') ?? { seq: 0, entries: {} }; }
-  catch { return { seq: 0, entries: {} }; }
-}
-
-export function journalWrite(id, pid, xml) {
-  try {
-    const j = journalRead(id);
-    j.seq++;
-    j.entries[pid] = { seq: j.seq, xml };
-    localStorage.setItem(jkey(id), JSON.stringify(j));
-    return j.seq;
-  } catch {
-    return -1; // quota exceeded: IndexedDB still has it shortly
-  }
-}
-
-export function journalCommit(id, upToSeq) {
-  try {
-    const j = journalRead(id);
-    for (const [pid, e] of Object.entries(j.entries)) if (e.seq <= upToSeq) delete j.entries[pid];
-    localStorage.setItem(jkey(id), JSON.stringify(j)); // keep seq monotonic
-  } catch { /* ignore */ }
-}
-
-export function journalClear(id) {
-  try { localStorage.removeItem(jkey(id)); } catch { /* ignore */ }
 }

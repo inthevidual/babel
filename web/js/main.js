@@ -45,6 +45,7 @@ addEventListener('hashchange', route);
 route();
 
 async function route() {
+  if (S.backend.mode === 'server' && !S.backend.user) return showLogin();
   const m = location.hash.match(/^#p=([\w-]+)/);
   if (P && (!m || m[1] !== P.project.id)) await closeProject();
   if (m) {
@@ -54,21 +55,85 @@ async function route() {
 
 function fatal(e) {
   console.error(e);
+  if (e instanceof S.AuthError) return signedOut();
   $('#loading').hidden = true;
   toast(e.message || String(e), 'error', 12000);
   if (!P) { history.replaceState(null, '', '#'); showHome(); }
 }
 
+// ── Signing in (Babel server only) ─────────────────────────────────────────
+
+function showLogin() {
+  document.body.classList.remove('working');
+  $('#work').hidden = $('#home').hidden = true;
+  $('#barDoc').hidden = $('#barTools').hidden = true;
+  $('#login').hidden = false;
+  document.title = 'Sign in — Babel';
+  $('#loginUser').focus();
+}
+
+$('#loginForm').onsubmit = async e => {
+  e.preventDefault();
+  const err = $('#loginError');
+  err.hidden = true;
+  try {
+    const r = await S.login($('#loginUser').value.trim(), $('#loginPass').value);
+    S.backend.user = r.user;
+    $('#loginPass').value = '';
+    $('#login').hidden = true;
+    route();
+  } catch (ex) {
+    err.textContent = ex instanceof S.AuthError ? 'Wrong user name or password.' : ex.message;
+    err.hidden = false;
+  }
+};
+
+$('#btnLogout').onclick = async () => {
+  await closeProject();
+  await S.logout().catch(() => {});
+  S.backend.user = null;
+  history.replaceState(null, '', '#');
+  showLogin();
+};
+
+// The session ran out. Edits are safe in the journal until the next sign-in.
+function signedOut() {
+  if (P) { flushAll(); P.readOnly = true; }
+  S.backend.user = null;
+  $('#loading').hidden = true;
+  toast('You were signed out. Your latest edits are kept in this browser and saved after you sign in.', 'error', 12000);
+  P?.unwatch?.();
+  P = null;
+  showLogin();
+}
+
 // ── Home ───────────────────────────────────────────────────────────────────
+
+const onServer = S.backend.kind === 'http';
+if (onServer) {
+  $('#dropHint').textContent = S.backend.mode === 'desktop'
+    ? 'Drop a .docx here or click to choose. It is kept on this computer.'
+    : 'Drop a .docx here or click to choose. It is uploaded to your account on this server.';
+  $('#recentTitle').textContent = 'Your translations';
+  $('#privacyNote').textContent = (S.backend.mode === 'desktop'
+    ? 'Documents are kept on this computer, and synced to your Babel account if you have signed in to one.'
+    : 'Documents are kept on this server under your account.')
+    + ' When proofing is on, the text of edited paragraphs is sent to LanguageTool for spelling and grammar checks; you can turn that off in Settings.';
+}
 
 async function showHome() {
   document.body.classList.remove('working');
-  $('#work').hidden = true;
+  $('#work').hidden = $('#login').hidden = true;
   $('#barDoc').hidden = $('#barTools').hidden = true;
   $('#home').hidden = false;
+  $('#account').hidden = !S.backend.user || S.backend.mode !== 'server';
+  if (S.backend.user) $('#accountName').textContent = S.backend.user.name;
   document.title = 'Babel';
   let projects = [];
-  try { projects = await S.listProjects(); } catch (e) { toast('Browser storage is unavailable: ' + e.message, 'error', 12000); }
+  try { projects = await S.listProjects(); } catch (e) {
+    if (e instanceof S.AuthError) return signedOut();
+    toast((onServer ? 'Could not load your translations: ' : 'Browser storage is unavailable: ') + e.message, 'error', 12000);
+  }
   const list = $('#recentList');
   list.innerHTML = '';
   $('#recent').hidden = !projects.length;
@@ -86,7 +151,7 @@ async function showHome() {
       <button class="ghost small danger" data-act="delete">Delete</button>`;
     li.querySelector('[data-act=download]').onclick = () => downloadProject(p.id).catch(fatal);
     li.querySelector('[data-act=delete]').onclick = async () => {
-      if (!confirm(`Delete “${p.name}” and all its versions from this browser? Download it first if you want to keep it.`)) return;
+      if (!confirm(`Delete “${p.name}” and all its versions${onServer ? '' : ' from this browser'}? Download it first if you want to keep it.`)) return;
       await S.deleteProject(p.id);
       showHome();
     };
@@ -221,13 +286,14 @@ async function openProject(id) {
   document.body.classList.add('working');
 
   const project = await S.getProject(id);
-  if (!project) throw new Error('That translation is not in this browser’s storage.');
+  if (!project) throw new Error(onServer ? 'That translation was not found.' : 'That translation is not in this browser’s storage.');
   const source = await S.getSource(id);
   const stored = await S.getParts(id);
 
   const lock = await acquireLock(id);
   const session = P = {
     project, source, lock,
+    unwatch: S.watch(id),
     keyToPath: Object.fromEntries(project.textParts.map(p => [X.partKey(p), p])),
     src: {}, tgt: {},               // path -> XML Document
     srcEl: new Map(), tgtEl: new Map(), // pid -> XML element
@@ -374,6 +440,7 @@ async function closeProject() {
   flushAll();
   await save();
   P.lock?.release();
+  P.unwatch();
   proofer.dirty.clear();
   P = null;
   srcRoot.innerHTML = tgtRoot.innerHTML = '';
@@ -634,7 +701,7 @@ function setSaveState(state, detail) {
         : `Not saved — ${detail}`;
   el.title = state === 'error'
     ? 'Edits are still kept in the recovery journal. Download a copy to be safe.'
-    : 'Saved in this browser’s storage. Every edit is journalled immediately.';
+    : `Saved ${onServer ? (S.backend.mode === 'desktop' ? 'on this computer' : 'on the server') : 'in this browser’s storage'}. Every edit is journalled immediately.`;
 }
 
 async function snapshot(reason) {
@@ -1500,11 +1567,12 @@ async function openVersions() {
       <span class="v-stats">${st.total ? Math.floor(100 * st.done / st.total) : 0} % · ${nf.format(st.tgtChars ?? 0)} chars</span>
       <button type="button" class="ghost small" data-a="dl">Download</button>
       <button type="button" class="ghost small" data-a="restore">Restore</button>`;
-    li.querySelector('[data-a=dl]').onclick = () => downloadProject(P.project.id, s.parts, '_' + new Date(s.time).toISOString().slice(0, 16).replace(/[:T]/g, '-')).catch(fatal);
+    const parts = async () => s.parts ?? (await S.getSnapshot(s.sid)).parts;
+    li.querySelector('[data-a=dl]').onclick = async () => downloadProject(P.project.id, await parts(), '_' + new Date(s.time).toISOString().slice(0, 16).replace(/[:T]/g, '-')).catch(fatal);
     li.querySelector('[data-a=restore]').onclick = async () => {
       if (!confirm(`Restore the version from ${new Date(s.time).toLocaleString()}? The current state is kept as a version first.`)) return;
       dlg.close();
-      await restoreParts(s.parts, 'before restore');
+      await restoreParts(await parts(), 'before restore').catch(fatal);
     };
     list.appendChild(li);
   }
@@ -1512,6 +1580,24 @@ async function openVersions() {
   $('#versionStorage').textContent = info ? `Browser storage in use: ${fmtBytes(info.usage)}${info.persisted ? ' (persistent)' : ''}.` : '';
   if (!dlg.open) dlg.showModal();
 }
+
+// Another device or tab saved this translation, or a save of ours was merged
+// with one. Unsaved edits are in the journal, which is replayed on reopening.
+S.onRemoteChange(async (id, kind) => {
+  if (!P || P.project.id !== id || P.reloading) return;
+  if (kind === 'deleted') {
+    P.readOnly = true;
+    toast('This translation was deleted on another device.', 'error', 12000);
+    return;
+  }
+  P.reloading = true;
+  flushAll();
+  P.dirty.clear();
+  P.readOnly = true;   // closeProject saves; nothing is left to save
+  await closeProject();
+  await openProject(id).catch(fatal);
+  toast(kind === 'merged' ? 'Edits from another device were merged in.' : 'Updated with edits from another device.');
+});
 
 async function restoreParts(parts, reason) {
   const id = P.project.id;
