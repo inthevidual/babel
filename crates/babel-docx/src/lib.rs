@@ -3,6 +3,7 @@
 //! the text of runs inside one `w:p` and nothing else.
 
 pub mod ooxml;
+pub mod package;
 pub mod para;
 pub mod tree;
 pub mod writeback;
