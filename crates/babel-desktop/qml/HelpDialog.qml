@@ -14,7 +14,7 @@ Kirigami.Dialog {
 
     readonly property var keys: [
         ["Click, drag", "Place the caret, select (within a paragraph)"],
-        ["Double-click", "Select a word"],
+        ["Double-click, triple-click", "Select a word, the paragraph"],
         ["Shift + arrows, Home, End", "Select"],
         ["Enter", "Next paragraph"],
         ["Shift + Enter", "Line break"],

@@ -1,0 +1,262 @@
+[
+{
+"wait": 1500
+},
+{
+"name": "opened",
+"expect": {
+"depth": 2,
+"editing": true,
+"project": "sample"
+}
+},
+{
+"name": "click places the caret",
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"name": "click places the caret",
+"expect": {
+"para": "document:2",
+"selectedSome": false
+}
+},
+{
+"name": "double-click selects a word",
+"x": 1000,
+"y": 282,
+"click": 2,
+"wait": 700
+},
+{
+"name": "double-click selects a word",
+"expect": {
+"selectedSome": true
+}
+},
+{
+"log": "word"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"name": "triple-click selects the paragraph",
+"x": 1000,
+"y": 282,
+"click": 2
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"name": "triple-click selects the paragraph",
+"expect": {
+"selectedStarts": "This report is"
+}
+},
+{
+"log": "paragraph"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"name": "drag selects, the list stays put",
+"drag": [
+900,
+282,
+1100,
+282
+]
+},
+{
+"name": "drag selects, the list stays put",
+"expect": {
+"selectedSome": true,
+"targetY": -8
+}
+},
+{
+"log": "drag"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"name": "vertical drag selects across lines, no scrolling",
+"drag": [
+900,
+282,
+1000,
+302
+]
+},
+{
+"name": "vertical drag selects across lines, no scrolling",
+"expect": {
+"selectedSome": true,
+"targetY": -8
+}
+},
+{
+"log": "vertical"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"name": "long vertical drag does not scroll",
+"drag": [
+900,
+282,
+900,
+600
+]
+},
+{
+"name": "long vertical drag does not scroll",
+"expect": {
+"targetY": -8
+}
+},
+{
+"log": "longdrag"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"drag": [
+900,
+282,
+1100,
+282
+]
+},
+{
+"name": "Delete removes the selection",
+"key": 16777223
+},
+{
+"name": "Delete removes the selection",
+"expect": {
+"selectedSome": false,
+"charsBelow": 5534
+}
+},
+{
+"log": "deleted"
+},
+{
+"name": "typing with real key events",
+"key": 65,
+"text": "A"
+},
+{
+"log": "typed"
+},
+{
+"name": "drag in the original selects",
+"drag": [
+150,
+282,
+330,
+282
+]
+},
+{
+"name": "drag in the original selects",
+"expect": {
+"targetY": -8
+}
+},
+{
+"log": "source"
+},
+{
+"wait": 1200
+},
+{
+"name": "back goes to the list and closes",
+"x": 22,
+"y": 24,
+"click": 1,
+"wait": 900
+},
+{
+"name": "back goes to the list and closes",
+"expect": {
+"depth": 1,
+"editing": false
+}
+},
+{
+"name": "click reopens",
+"x": 400,
+"y": 85,
+"click": 1,
+"wait": 1200
+},
+{
+"name": "click reopens",
+"expect": {
+"depth": 2,
+"editing": true
+}
+},
+{
+"name": "typing survived the round trip",
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"log": "reopened"
+},
+{
+"name": "back and reopen again",
+"x": 22,
+"y": 24,
+"click": 1,
+"wait": 900
+},
+{
+"name": "back and reopen again",
+"expect": {
+"depth": 1
+}
+},
+{
+"x": 400,
+"y": 85,
+"click": 1,
+"wait": 1200
+},
+{
+"name": "back and reopen again",
+"expect": {
+"depth": 2,
+"editing": true
+}
+}
+]

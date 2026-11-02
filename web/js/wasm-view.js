@@ -388,6 +388,19 @@ export class WasmView {
         drag = { side };
         root.setPointerCapture?.(e.pointerId);
       });
+      // The page under a click: pointer capture may aim the event at the panel itself.
+      const pageAt = e => (side === 'tgt' ? this.tgt : this.src).find(q => {
+        const b = q.wrap.getBoundingClientRect();
+        return e.clientX >= b.left && e.clientX <= b.right && e.clientY >= b.top && e.clientY <= b.bottom;
+      });
+      // Triple-click: the paragraph. Not mousedown: preventing pointerdown's default suppresses it.
+      root.addEventListener('click', e => {
+        if (e.detail !== 3) return;
+        const p = pageAt(e);
+        if (!p) return;
+        const [i, x, y] = this.at(e, p);
+        this.answer(side === 'tgt' ? this.editor.paragraph(i, x, y) : this.editor.sourceParagraph(i, x, y));
+      });
       root.addEventListener('pointermove', e => {
         if (!drag || drag.side !== side || !(e.buttons & 1)) return;
         const list = side === 'tgt' ? this.tgt : this.src;
@@ -398,7 +411,7 @@ export class WasmView {
       });
       root.addEventListener('pointerup', () => { drag = null; });
       root.addEventListener('dblclick', e => {
-        const p = pageOf(e, side === 'tgt' ? this.tgt : this.src);
+        const p = pageAt(e);
         if (!p) return;
         const [i, x, y] = this.at(e, p);
         this.answer(side === 'tgt' ? this.editor.word(i, x, y) : this.editor.sourceWord(i, x, y));

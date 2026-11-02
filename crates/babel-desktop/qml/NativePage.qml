@@ -125,6 +125,26 @@ Kirigami.Page {
         syncing = false;
     }
 
+    // A third click soon after a double-click, in the same place: the paragraph.
+    property var lastDouble: ({ time: 0, x: 0, y: 0 })
+
+    function noteDouble(mouse) {
+        lastDouble = { time: Date.now(), x: mouse.x, y: mouse.y };
+    }
+
+    function isTriple(mouse) {
+        const d = lastDouble;
+        const third = Date.now() - d.time < Qt.styleHints.mouseDoubleClickInterval && Math.abs(mouse.x - d.x) < 6 && Math.abs(mouse.y - d.y) < 6;
+        if (third)
+            lastDouble = { time: 0, x: 0, y: 0 };
+        return third;
+    }
+
+    // How far the translation is scrolled (for the UI tests).
+    function targetY() {
+        return right.contentY;
+    }
+
     function n(x) {
         return Number(x || 0).toLocaleString(Qt.locale(), "f", 0);
     }
@@ -497,6 +517,8 @@ Kirigami.Page {
                         anchors.fill: parent
                         cursorShape: Qt.IBeamCursor
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        // A drag selects text; it must not scroll the list.
+                        preventStealing: true
                         property bool dragging: false
                         onPressed: mouse => {
                             if (mouse.button === Qt.RightButton) {
@@ -504,6 +526,10 @@ Kirigami.Page {
                                 return;
                             }
                             ime.forceActiveFocus();
+                            if (page.isTriple(mouse)) {
+                                page.answer(Backend.nativeSourceParagraph(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false);
+                                return;
+                            }
                             dragging = true;
                             page.answer(Backend.nativeSourceClick(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, (mouse.modifiers & Qt.ShiftModifier) !== 0), false);
                         }
@@ -512,7 +538,11 @@ Kirigami.Page {
                                 page.answer(Backend.nativeSourceClick(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, true), false);
                         }
                         onReleased: dragging = false
-                        onDoubleClicked: mouse => page.answer(Backend.nativeSourceWord(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false)
+                        onDoubleClicked: mouse => {
+                            dragging = false;
+                            page.noteDouble(mouse);
+                            page.answer(Backend.nativeSourceWord(spage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false);
+                        }
                     }
                 }
             }
@@ -592,9 +622,15 @@ Kirigami.Page {
                         anchors.fill: parent
                         cursorShape: Qt.IBeamCursor
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        // A drag selects text; it must not scroll the list.
+                        preventStealing: true
                         property bool dragging: false
                         onPressed: mouse => {
                             ime.forceActiveFocus();
+                            if (mouse.button === Qt.LeftButton && page.isTriple(mouse)) {
+                                page.answer(Backend.nativeParagraph(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false);
+                                return;
+                            }
                             if (mouse.button === Qt.RightButton) {
                                 if (page.selection.length === 0)
                                     page.answer(Backend.nativeClick(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, false), false);
@@ -610,7 +646,11 @@ Kirigami.Page {
                                 page.answer(Backend.nativeClick(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt, true), false);
                         }
                         onReleased: dragging = false
-                        onDoubleClicked: mouse => page.answer(Backend.nativeWord(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false)
+                        onDoubleClicked: mouse => {
+                            dragging = false;
+                            page.noteDouble(mouse);
+                            page.answer(Backend.nativeWord(tpage.index, mouse.x / page.pxPerPt, mouse.y / page.pxPerPt), false);
+                        }
                     }
                     Rectangle {
                         visible: page.caret !== null && page.caret.page === tpage.index && caretBox.visible && page.selection.length === 0
@@ -644,6 +684,8 @@ Kirigami.Page {
     TextInput {
         id: ime
         focus: true
+        // Behind the pages: a press on the caret must reach the page, not this.
+        z: -1
         opacity: 0
         width: 2
         height: page.caret ? page.caret.height * page.pxPerPt : 16

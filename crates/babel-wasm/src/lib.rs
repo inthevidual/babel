@@ -110,6 +110,16 @@ impl WasmEditor {
         self.editor.select_word(page, x, y).to_string()
     }
 
+    /// Triple-click: selects the paragraph.
+    pub fn paragraph(&mut self, page: usize, x: f32, y: f32) -> String {
+        self.editor.select_paragraph(page, x, y).to_string()
+    }
+
+    #[wasm_bindgen(js_name = sourceParagraph)]
+    pub fn source_paragraph(&mut self, page: usize, x: f32, y: f32) -> String {
+        self.editor.source_select_paragraph(page, x, y).to_string()
+    }
+
     #[wasm_bindgen(js_name = sourceClick)]
     pub fn source_click(&mut self, page: usize, x: f32, y: f32, extend: bool) -> String {
         self.editor.source_click(page, x, y, extend).to_string()

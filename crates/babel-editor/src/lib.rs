@@ -593,6 +593,26 @@ impl Editor {
         self.state()
     }
 
+    /// Triple-click: selects the paragraph.
+    pub fn select_paragraph(&mut self, page: usize, x: f32, y: f32) -> Value {
+        if let Some(hit) = self.session.hit(page, x, y) {
+            let len = self.session.text_of(&hit).map(str::len).unwrap_or(0);
+            self.anchor = Some(Pos::new(hit.story, hit.path.clone(), 0));
+            self.caret = Some(Pos::new(hit.story, hit.path, len));
+        }
+        self.state()
+    }
+
+    /// Triple-click on the original: selects its paragraph.
+    pub fn source_select_paragraph(&mut self, page: usize, x: f32, y: f32) -> Value {
+        if let Some(hit) = self.source.layout.hit(page, x, y, wordcraft_doc::StoryRef::Body) {
+            let len = self.source.doc.para(hit.story, &hit.path).map(|p| p.text.len()).unwrap_or(0);
+            self.src_anchor = Some(Pos::new(hit.story, hit.path.clone(), 0));
+            self.src_caret = Some(Pos::new(hit.story, hit.path, len));
+        }
+        self.state()
+    }
+
     /// A click on the original: selects there (`extend`: dragging or Shift);
     /// a plain click also puts the caret at the start of the translation's
     /// paragraph (as the web editor's click in the original does).

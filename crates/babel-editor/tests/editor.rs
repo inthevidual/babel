@@ -173,6 +173,22 @@ fn runs_typed_in_an_earlier_session_stay_editable() {
 }
 
 #[test]
+fn triple_click_selects_the_paragraph_in_either_panel() {
+    let mut e = editor();
+    let p = e.session.locate("document:2").unwrap();
+    let c = e.session.caret(&p, 0).unwrap();
+    let (x, y) = (c.x + 40.0, c.top + c.height / 2.0);
+    e.select_paragraph(c.page, x, y);
+    assert!(e.selected_text().starts_with("This report is confidential"));
+    assert!(e.selected_text().ends_with("from 2025."));
+    e.source_select_paragraph(c.page, x, y);
+    assert!(e.source_selected_text().starts_with("This report is confidential"));
+    // Typing replaces it.
+    e.key(Key::Text("Ny text".into()), false);
+    assert_eq!(e.session.text_of(&p).unwrap(), "Ny text");
+}
+
+#[test]
 fn look_up_terms() {
     assert_eq!(lookup_term("  board of directors. ").as_deref(), Some("board of directors"));
     assert_eq!(lookup_term("one two three four five six seven"), None);

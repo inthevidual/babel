@@ -31,6 +31,7 @@ Kirigami.ApplicationWindow {
     function openProject(id, name) {
         if (!inStack(editor))
             pageStack.push(editor);
+        pageStack.currentIndex = pageStack.depth - 1;
         editor.load(id, name);
     }
 
@@ -60,13 +61,21 @@ Kirigami.ApplicationWindow {
         property bool changing: false
     }
 
-    // The editor closes its translation (saving) when it leaves the stack.
+    // The back arrow only moves to the list and leaves the editor in the stack:
+    // take it out, and close its translation (saving), when the list comes back.
     Connections {
         target: root.pageStack
         function onCurrentItemChanged() {
-            if (!root.inStack(editor))
-                editor.close();
+            if (root.pageStack.currentItem === projects && root.inStack(editor))
+                Qt.callLater(root.leaveEditor);
         }
+    }
+
+    function leaveEditor() {
+        if (pageStack.currentItem !== projects)
+            return;
+        editor.close();
+        pageStack.pop(projects);
     }
 
     ProjectsPage {
@@ -187,6 +196,84 @@ Kirigami.ApplicationWindow {
         }
         if (typed && root.inStack(editor))
             editor.typeTest(typed.slice(14));
+    }
+
+    // UI test driver: with BABEL_TEST_SCRIPT set, runs its steps through real
+    // input events and logs the state, then quits (test/ui/).
+    Timer {
+        id: driver
+        property var steps: []
+        property int at: 0
+        interval: 150
+        repeat: true
+        function state() {
+            return JSON.stringify({
+                depth: root.pageStack.depth,
+                editing: editor.editing,
+                project: editor.projectName,
+                caret: editor.caret ? { page: editor.caret.page, x: Math.round(editor.caret.x) } : null,
+                para: editor.paragraph ? editor.paragraph.pid : null,
+                selected: Backend.testSelected(),
+                sourceSelected: Backend.testSourceSelected(),
+                targetY: Math.round(editor.targetY()),
+                chars: editor.stats ? editor.stats.tgtChars : null,
+            });
+        }
+        onTriggered: {
+            if (at >= steps.length) {
+                Qt.quit();
+                return;
+            }
+            const s = steps[at++];
+            const clicks = n => {
+                for (let i = 0; i < n; i++) {
+                    Backend.testMouse(1, s.x, s.y, s.mods || 0);
+                    if (i === 1)
+                        Backend.testMouse(3, s.x, s.y, s.mods || 0);
+                    Backend.testMouse(2, s.x, s.y, s.mods || 0);
+                }
+            };
+            if (s.wait)
+                interval = s.wait;
+            else
+                interval = 150;
+            if (s.click)
+                clicks(s.click);
+            if (s.drag) {
+                const [x0, y0, x1, y1] = s.drag;
+                Backend.testMouse(0, x0, y0, 0);
+                Backend.testMouse(1, x0, y0, 0);
+                for (let i = 1; i <= 12; i++)
+                    Backend.testMouse(0, x0 + (x1 - x0) * i / 12, y0 + (y1 - y0) * i / 12, 0);
+                Backend.testMouse(2, x1, y1, 0);
+            }
+            if (s.key !== undefined)
+                Backend.testKey(s.key, s.text || "", s.mods || 0);
+            if (s.grab)
+                Backend.testGrab(s.grab);
+            if (s.log)
+                console.warn("UITEST", s.log, state());
+            if (s.expect) {
+                const st = JSON.parse(state());
+                for (const [k, want] of Object.entries(s.expect)) {
+                    const got = k === "selectedStarts" ? st.selected.startsWith(want)
+                        : k === "sourceStarts" ? st.sourceSelected.startsWith(want)
+                        : k === "selectedSome" ? (st.selected.length > 0) === want
+                        : k === "charsBelow" ? st.chars < want
+                        : k === "scrolled" ? st.targetY !== want
+                        : st[k] === want;
+                    const ok = got === true || (k in st && got === true);
+                    console.warn(ok ? "UITEST ok  " : "UITEST FAIL", s.name || "", k, JSON.stringify(want), ok ? "" : state());
+                }
+            }
+        }
+        Component.onCompleted: {
+            const script = Backend.testScript();
+            if (script) {
+                steps = JSON.parse(script);
+                start();
+            }
+        }
     }
 
     Connections {

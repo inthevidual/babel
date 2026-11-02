@@ -21,6 +21,9 @@ pub mod qobject {
         fn babel_exit_on_load_failure(engine: Pin<&mut QQmlApplicationEngine>);
         fn babel_clipboard_set(text: &QString);
         fn babel_clipboard_text() -> QString;
+        fn babel_test_mouse(kind: i32, x: f64, y: f64, modifiers: i32);
+        fn babel_test_key(key: i32, text: &QString, modifiers: i32);
+        fn babel_test_grab(path: &QString) -> bool;
     }
 
     extern "RustQt" {
@@ -119,6 +122,15 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "nativeWord"]
         fn native_word(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        /// Triple-click: selects the paragraph.
+        #[qinvokable]
+        #[cxx_name = "nativeParagraph"]
+        fn native_paragraph(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "nativeSourceParagraph"]
+        fn native_source_paragraph(self: Pin<&mut Backend>, page: i32, x: f64, y: f64) -> QString;
 
         /// A key (Qt key code, its text, Qt modifier flags): {caret, selection, pages, all, error, …}.
         #[qinvokable]
@@ -221,6 +233,33 @@ pub mod qobject {
         #[qsignal]
         #[cxx_name = "nativeExternalChange"]
         fn native_external_change(self: Pin<&mut Backend>, id: QString);
+
+        // ── UI test driver (only with BABEL_TEST_SCRIPT) ─────────────────
+
+        /// The script's steps as JSON, or "" when not testing.
+        #[qinvokable]
+        #[cxx_name = "testScript"]
+        fn test_script(self: &Backend) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "testMouse"]
+        fn test_mouse(self: &Backend, kind: i32, x: f64, y: f64, modifiers: i32);
+
+        #[qinvokable]
+        #[cxx_name = "testKey"]
+        fn test_key(self: &Backend, key: i32, text: &QString, modifiers: i32);
+
+        #[qinvokable]
+        #[cxx_name = "testGrab"]
+        fn test_grab(self: &Backend, path: &QString) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "testSelected"]
+        fn test_selected(self: &Backend) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "testSourceSelected"]
+        fn test_source_selected(self: &Backend) -> QString;
 
         // ── Account ─────────────────────────────────────────────────────
 
@@ -459,6 +498,14 @@ impl qobject::Backend {
         s(&native::select_word(page.max(0) as usize, x as f32, y as f32))
     }
 
+    fn native_paragraph(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        s(&native::select_paragraph(page.max(0) as usize, x as f32, y as f32))
+    }
+
+    fn native_source_paragraph(self: Pin<&mut Self>, page: i32, x: f64, y: f64) -> QString {
+        s(&native::source_select_paragraph(page.max(0) as usize, x as f32, y as f32))
+    }
+
     fn native_key(self: Pin<&mut Self>, key: i32, text: &QString, modifiers: i32) -> QString {
         match babel_editor::Key::from_qt(key, &text.to_string(), modifiers) {
             Some(k) => s(&native::key(k, modifiers & 0x0200_0000 != 0)),
@@ -567,6 +614,32 @@ impl qobject::Backend {
         if let Err(e) = native::save() {
             self.message(QString::from(&format!("Could not save: {e}")), true);
         }
+    }
+
+    // ── UI test driver ────────────────────────────────────────────────
+
+    fn test_script(&self) -> QString {
+        std::env::var_os("BABEL_TEST_SCRIPT").and_then(|p| std::fs::read_to_string(p).ok()).map(|s| QString::from(&s)).unwrap_or_default()
+    }
+
+    fn test_mouse(&self, kind: i32, x: f64, y: f64, modifiers: i32) {
+        qobject::babel_test_mouse(kind, x, y, modifiers);
+    }
+
+    fn test_key(&self, key: i32, text: &QString, modifiers: i32) {
+        qobject::babel_test_key(key, text, modifiers);
+    }
+
+    fn test_grab(&self, path: &QString) -> bool {
+        qobject::babel_test_grab(path)
+    }
+
+    fn test_selected(&self) -> QString {
+        QString::from(&native::selected_text())
+    }
+
+    fn test_source_selected(&self) -> QString {
+        QString::from(&native::source_selected_text())
     }
 
     // ── Account ───────────────────────────────────────────────────────

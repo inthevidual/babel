@@ -176,6 +176,29 @@ const stylesXml = execFileSync('unzip', ['-p', file, 'word/styles.xml']).toStrin
 check(docXml.includes('Denna rapport') && !docXml.includes('data-bp') && !docXml.includes('data-bgen'), 'the downloaded document has the translation and no Babel ids');
 check(stylesXml.includes('w:val="sv-SE"'), 'and is marked Swedish');
 
+// Double- and triple-click: the word, the paragraph.
+{
+  const selected = () => page.evaluate(() => __babel.P.view.editor.selectedText());
+  const p = await where('document:2', 12);
+  const clicks = async n => {
+    await page.mouse.move(p.x, p.y);
+    for (let i = 1; i <= n; i++) {
+      await page.mouse.down({ clickCount: i });
+      await page.mouse.up({ clickCount: i });
+      await page.waitForTimeout(40);
+    }
+  };
+  await clicks(2);
+  await page.waitForTimeout(400);
+  const word = await selected();
+  check(word.length > 0 && !word.includes(' '), 'double-click selects a word: ' + word);
+  await page.waitForTimeout(600);
+  await clicks(3);
+  await page.waitForTimeout(400);
+  const para = await selected();
+  check(para.length > word.length && para.includes(' '), 'triple-click selects the paragraph: ' + para.slice(0, 40));
+}
+
 check(!errors.length, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
 await browser.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

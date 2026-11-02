@@ -250,6 +250,14 @@ pub fn select_word(page: usize, x: f32, y: f32) -> Value {
     with(|s| { let v = s.editor.select_word(page, x, y); s.answer(v) }, Value::Null)
 }
 
+pub fn select_paragraph(page: usize, x: f32, y: f32) -> Value {
+    with(|s| { let v = s.editor.select_paragraph(page, x, y); s.answer(v) }, Value::Null)
+}
+
+pub fn source_select_paragraph(page: usize, x: f32, y: f32) -> Value {
+    with(|s| { let v = s.editor.source_select_paragraph(page, x, y); s.answer(v) }, Value::Null)
+}
+
 pub fn source_click(page: usize, x: f32, y: f32, extend: bool) -> Value {
     with(|s| { let v = s.editor.source_click(page, x, y, extend); s.answer(v) }, Value::Null)
 }

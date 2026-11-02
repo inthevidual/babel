@@ -328,7 +328,9 @@ kbd { font: 600 11px/1 ui-monospace, monospace; border: 1px solid var(--line); b
 .w-mark { width: 3px; border-radius: 2px; opacity: .8; }
 .w-mark.edited { background: var(--edited); }
 .w-mark.done { background: var(--done); }
-.w-input { position: fixed; width: 2px; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; z-index: 5; caret-color: transparent; background: transparent; color: transparent; }
+.w-input {
+  /* It follows the caret: clicks there must reach the page. */
+  pointer-events: none; position: fixed; width: 2px; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; z-index: 5; caret-color: transparent; background: transparent; color: transparent; }
 .w-preedit { position: fixed; z-index: 6; background: var(--raised); color: var(--fg); text-decoration: underline; padding: 0 1px; pointer-events: none; white-space: pre; }
 .pop-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .pop-acts { display: flex; gap: 6px; }
