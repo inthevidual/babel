@@ -182,12 +182,12 @@ impl Editor {
         let text_parts: Vec<String> = source_parts.keys().cloned().collect();
         let mut target = source_parts.clone();
         target.extend(translated);
-        // Runs Babel generated in an earlier session become first-class runs,
-        // as the web editor does on opening (ensureIds).
+        // Runs Babel generated in an earlier session, or that a link split off
+        // without an id, become first-class runs (ensureIds).
         let mut adopted = vec![];
         for path in &text_parts {
             let Some(xml) = target.get(path) else { continue };
-            if !xml.contains("data-bgen") && xml.contains("data-br") {
+            if !xml.contains("data-bgen") && !ooxml::lacks_run_id(xml) {
                 continue;
             }
             let mut part = Part::parse(xml)?;

@@ -107,6 +107,22 @@ pub fn normalize(t: &mut Tree, key: &str) {
     ensure_ids(t, key);
 }
 
+/// Whether some run has no id yet (it could not be edited until it has).
+pub fn lacks_run_id(xml: &str) -> bool {
+    let mut rest = xml;
+    while let Some(i) = rest.find("<w:r") {
+        rest = &rest[i + 4..];
+        if !rest.starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace()) {
+            continue;
+        }
+        let tag = &rest[..rest.find('>').unwrap_or(rest.len())];
+        if !tag.contains("data-br=") {
+            return true;
+        }
+    }
+    false
+}
+
 /// `ensureIds`: ids for paragraphs and runs that lack one (runs Babel
 /// generated become first-class runs), never renumbering existing ones; then
 /// fields are marked.
@@ -355,7 +371,7 @@ impl Link {
 }
 
 /// `parseHyperlinkInstr`: the link of a HYPERLINK field's instruction.
-fn parse_hyperlink_instr(instr: &str) -> Option<Link> {
+pub(crate) fn parse_hyperlink_instr(instr: &str) -> Option<Link> {
     let s = instr.trim_start();
     if !s.get(..9).is_some_and(|h| h.eq_ignore_ascii_case("HYPERLINK")) {
         return None;

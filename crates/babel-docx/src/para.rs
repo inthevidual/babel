@@ -75,6 +75,20 @@ pub struct Runs {
     pub info: Info,
     pub kinds: HashMap<String, RunKind>,
     pub texts: HashMap<String, String>,
+    /// HYPERLINK fields whose result is plain text: from any of the field's
+    /// separator, result or end runs to the result's text runs, in order.
+    pub link_results: HashMap<String, Vec<String>>,
+}
+
+/// A complex field being read.
+#[derive(Default)]
+struct OpenField {
+    instr: String,
+    separated: bool,
+    /// Anything but text in the result (another field, a tab, a picture).
+    plain: bool,
+    markers: Vec<String>,
+    results: Vec<String>,
 }
 
 pub fn runs(p_xml: &str) -> Result<Runs, crate::tree::XmlError> {
@@ -84,6 +98,8 @@ pub fn runs(p_xml: &str) -> Result<Runs, crate::tree::XmlError> {
     let mut info = Info::default();
     let mut kinds = HashMap::new();
     let mut texts = HashMap::new();
+    let mut link_results = HashMap::new();
+    let mut fields: Vec<OpenField> = vec![];
     for r in t.descendants(p) {
         if local(r) != "r" {
             continue;
@@ -113,9 +129,59 @@ pub fn runs(p_xml: &str) -> Result<Runs, crate::tree::XmlError> {
             }
             RunKind::Fixed => {}
         }
+        let mut marker = false;
+        for &k in &content {
+            match local(k) {
+                "instrText" => {
+                    marker = true;
+                    if let Some(f) = fields.last_mut().filter(|f| !f.separated) {
+                        f.instr.push_str(&t.text_content(k));
+                    }
+                }
+                "fldChar" => {
+                    marker = true;
+                    match t.attr(k, "w:fldCharType") {
+                        Some("begin") => {
+                            if let Some(outer) = fields.last_mut() {
+                                outer.plain = false;
+                            }
+                            fields.push(OpenField { plain: true, ..Default::default() });
+                        }
+                        Some("separate") => {
+                            if let Some(f) = fields.last_mut() {
+                                f.separated = true;
+                                f.markers.push(rid.clone());
+                            }
+                        }
+                        Some("end") => {
+                            if let Some(mut f) = fields.pop() {
+                                f.markers.push(rid.clone());
+                                let link = crate::ooxml::parse_hyperlink_instr(&f.instr).is_some();
+                                if link && f.plain && f.separated && fields.is_empty() && !f.results.is_empty() {
+                                    for m in f.markers.iter().chain(&f.results) {
+                                        link_results.insert(m.clone(), f.results.clone());
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !marker && !skipped {
+            if let Some(f) = fields.last_mut().filter(|f| f.separated) {
+                if kind == RunKind::Text {
+                    f.results.push(rid.clone());
+                } else if !content.is_empty() {
+                    f.plain = false;
+                }
+            }
+        }
         kinds.insert(rid, kind);
     }
-    Ok(Runs { info, kinds, texts })
+    Ok(Runs { info, kinds, texts, link_results })
 }
 
 #[cfg(test)]

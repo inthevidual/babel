@@ -340,6 +340,19 @@ impl Session {
                     pieces.push(Piece::Fixed { rid: None, text: wp.text[at..s].to_owned() });
                 }
                 let text = wp.text[s..e].to_owned();
+                // A link field's visible text is the translator's, whichever of
+                // the field's runs WordCraft credits it to.
+                if let Some(results) = r.link_results.get(&rid) {
+                    let joined: String = results.iter().filter_map(|id| r.texts.get(id).map(String::as_str)).collect();
+                    if joined == text {
+                        for id in results {
+                            let t = r.texts.get(id).cloned().unwrap_or_default();
+                            pieces.push(Piece::Text { rid: Some(id.clone()), base: Some(id.clone()), text: t, fmt: None });
+                        }
+                        at = e;
+                        continue;
+                    }
+                }
                 pieces.push(match r.kinds.get(&rid) {
                     // The page must show exactly the run's text, or writing it back would change it.
                     Some(RunKind::Text) if r.texts.get(&rid) == Some(&text) => {
@@ -624,6 +637,12 @@ impl Session {
         let doc_xml = self.parts.get_mut(&part).ok_or(EditError::NotEditable)?;
         let range = find_paragraph(doc_xml, &pid).ok_or(EditError::NotEditable)?;
         doc_xml.replace_range(range, xml);
+        // Runs a structural change split off need ids, or they could not be edited.
+        if babel_docx::ooxml::lacks_run_id(xml) {
+            let mut whole = babel_docx::ooxml::Part::parse(doc_xml).map_err(|e| EditError::Internal(e.to_string()))?;
+            babel_docx::ooxml::ensure_ids(&mut whole.tree, part_key(&part));
+            *doc_xml = whole.serialize();
+        }
         self.dirty.insert(part);
         for (path, x) in extra {
             self.parts.insert(path.clone(), x);

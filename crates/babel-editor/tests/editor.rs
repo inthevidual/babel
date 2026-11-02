@@ -188,6 +188,112 @@ fn triple_click_selects_the_paragraph_in_either_panel() {
     assert_eq!(e.session.text_of(&p).unwrap(), "Ny text");
 }
 
+/// Paragraph `document:3` ("See also <link> for…") with its link as a HYPERLINK field.
+fn with_field_link(xml: &str, result: &str) -> String {
+    let a = xml.find("<w:hyperlink").unwrap();
+    let b = xml.find("</w:hyperlink>").unwrap() + "</w:hyperlink>".len();
+    let field = format!(
+        r#"<w:r data-br="document:r900"><w:fldChar w:fldCharType="begin"/></w:r><w:r data-br="document:r901"><w:instrText>HYPERLINK "https://example.org/"</w:instrText></w:r><w:r data-br="document:r902"><w:fldChar w:fldCharType="separate"/></w:r>{result}<w:r data-br="document:r903"><w:fldChar w:fldCharType="end"/></w:r>"#
+    );
+    format!("{}{field}{}", &xml[..a], &xml[b..])
+}
+
+#[test]
+fn a_field_links_text_can_be_edited_and_the_field_stays() {
+    for result in [
+        r#"<w:r data-br="document:r910"><w:t>the website</w:t></w:r>"#,
+        r#"<w:r data-br="document:r910"><w:t>the </w:t></w:r><w:r data-br="document:r911"><w:t>website</w:t></w:r>"#,
+    ] {
+        let (original, mut source) = fixture();
+        let xml = source["word/document.xml"].clone();
+        source.insert("word/document.xml".into(), with_field_link(&xml, result));
+        let mut e = Editor::open(original, source, Parts::new(), &project()).unwrap();
+        let p = e.session.locate("document:3").unwrap();
+        assert_eq!(e.session.text_of(&p).unwrap(), "See also the website for background material.");
+        // Backspace from inside the link, over its last letters.
+        caret_at(&mut e, "document:3", "See also the website".len());
+        for _ in 0.."website".len() {
+            let v = e.key(Key::Backspace, false);
+            assert!(v["error"].is_null(), "{v}");
+        }
+        let v = e.key(Key::Text("webbplatsen".into()), false);
+        assert!(v["error"].is_null(), "{v}");
+        assert_eq!(e.session.text_of(&p).unwrap(), "See also the webbplatsen for background material.");
+        let out = para_xml(&e, "document:3");
+        assert!(out.contains("HYPERLINK") && out.contains(r#"w:fldCharType="end""#), "{out}");
+        assert!(out.contains("webbplatsen"), "{out}");
+    }
+}
+
+#[test]
+fn an_edited_field_link_survives_reopening_and_export() {
+    let (original, mut source) = fixture();
+    let xml = source["word/document.xml"].clone();
+    source.insert("word/document.xml".into(), with_field_link(&xml, r#"<w:r data-br="document:r910"><w:t>the website</w:t></w:r>"#));
+    let mut e = Editor::open(original.clone(), source.clone(), Parts::new(), &project()).unwrap();
+    caret_at(&mut e, "document:3", "See also the website".len());
+    e.key(Key::Backspace, false);
+    e.key(Key::Text("X".into()), false);
+    let saved = e.take_dirty();
+    let mut e2 = Editor::open(original.clone(), source, saved.clone(), &project()).unwrap();
+    let p = e2.session.locate("document:3").unwrap();
+    assert_eq!(e2.session.text_of(&p).unwrap(), "See also the websitX for background material.");
+    caret_at(&mut e2, "document:3", "See also the websitX".len());
+    let v = e2.key(Key::Backspace, false);
+    assert!(v["error"].is_null(), "still editable after reopening: {v}");
+    let out = babel_docx::package::build_docx(&original, &saved, Some("sv-SE")).unwrap();
+    let doc = babel_pages::read_part(&out, "word/document.xml").unwrap();
+    assert!(doc.contains(">the websitX<") && doc.contains("HYPERLINK"), "the exported link keeps its address and new text");
+    assert!(!doc.contains("data-b"));
+}
+
+#[test]
+fn other_fields_stay_fixed() {
+    let (original, mut source) = fixture();
+    let xml = source["word/document.xml"].clone();
+    let page = with_field_link(&xml, r#"<w:r data-br="document:r910"><w:t>7</w:t></w:r>"#).replace(r#"HYPERLINK "https://example.org/""#, "PAGE");
+    source.insert("word/document.xml".into(), page);
+    let mut e = Editor::open(original, source, Parts::new(), &project()).unwrap();
+    let p = e.session.locate("document:3").unwrap();
+    let pieces = e.session.pieces(&p).unwrap();
+    assert!(!pieces.iter().any(|q| matches!(q, babel_pages::edit::Piece::Text { rid: Some(r), .. } if r == "document:r910")), "{pieces:?}");
+}
+
+#[test]
+fn text_linked_with_ctrl_k_can_be_edited_now_and_after_reopening() {
+    let (original, source) = fixture();
+    let mut e = Editor::open(original.clone(), source.clone(), Parts::new(), &project()).unwrap();
+    // The middle of a run: the link splits it in three.
+    caret_at(&mut e, "document:2", "This ".len());
+    let p = e.session.locate("document:2").unwrap();
+    let end = wordcraft_doc::Pos::new(p.story, p.path.clone(), "This report".len());
+    let c = e.session.caret(&end, 0).unwrap();
+    e.click(c.page, c.x + 0.1, c.top + c.height / 2.0, true);
+    assert!(e.paste_link("https://example.org/rapport")["error"].is_null());
+    assert!(!babel_docx::ooxml::lacks_run_id(&para_xml(&e, "document:2")), "every run has an id at once");
+    caret_at(&mut e, "document:2", "This report".len());
+    let v = e.key(Key::Backspace, false);
+    assert!(v["error"].is_null(), "{v}");
+    assert!(e.session.text_of(&p).unwrap().starts_with("This repor is "));
+    assert!(para_xml(&e, "document:2").contains("repor<"));
+
+    // A document saved before this fix: the runs have no ids, and no marker.
+    let mut saved = e.take_dirty();
+    let doc = saved["word/document.xml"].clone();
+    let linked = doc.find("<w:hyperlink").unwrap();
+    let tag = linked + doc[linked..].find("<w:r ").unwrap();
+    let close = tag + doc[tag..].find('>').unwrap();
+    let stripped: String = doc[tag..close].split(' ').filter(|a| !a.starts_with("data-br=")).collect::<Vec<_>>().join(" ");
+    saved.insert("word/document.xml".into(), format!("{}{}{}", &doc[..tag], stripped, &doc[close..]));
+    assert!(babel_docx::ooxml::lacks_run_id(&saved["word/document.xml"]));
+    let mut e2 = Editor::open(original, source, saved, &project()).unwrap();
+    assert!(e2.take_dirty().contains_key("word/document.xml"), "the repair is saved");
+    caret_at(&mut e2, "document:2", "This repor".len());
+    let v = e2.key(Key::Backspace, false);
+    assert!(v["error"].is_null(), "{v}");
+    assert!(e2.session.text_of(&p).unwrap().starts_with("This repo is "));
+}
+
 #[test]
 fn look_up_terms() {
     assert_eq!(lookup_term("  board of directors. ").as_deref(), Some("board of directors"));
