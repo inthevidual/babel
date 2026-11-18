@@ -57,6 +57,8 @@ export RUSTUP_HOME=$BASE/rust CARGO_HOME=$BASE/rust
 export PATH=$CARGO_HOME/bin:$PATH
 DATA=/var/lib/babel
 ENV=/etc/babel/babel.env
+# Full paths: a shell from the Proxmox host (pct exec, pct enter) has no /usr/local/bin.
+ADMIN=/usr/local/bin/babel-admin
 
 say "Packages"
 export DEBIAN_FRONTEND=noninteractive
@@ -166,10 +168,10 @@ fi
 
 if [ -n "$NEW_USER" ]; then
     say "Account $NEW_USER"
-    if babel-admin user list | grep -qx "$NEW_USER"; then
-        echo "$NEW_USER already exists (change the password: babel-admin user passwd $NEW_USER)."
+    if "$ADMIN" user list | grep -qx "$NEW_USER"; then
+        echo "$NEW_USER already exists (change the password: $ADMIN user passwd $NEW_USER)."
     else
-        babel-admin user add "$NEW_USER"
+        "$ADMIN" user add "$NEW_USER"
     fi
 fi
 
@@ -189,12 +191,12 @@ No custom nginx settings are needed.
 Then open https://<that address>, or sign in from the desktop app
 (Sign In to Sync…) with the same address.
 
-Accounts:  babel-admin user add NAME   (also passwd, del, list)
+Accounts:  $ADMIN user add NAME   (also passwd, del, list)
 Log:       journalctl -u babel -f
 Update:    run this script again
 Back up:   $DATA/babel.db (a Proxmox backup of the container covers it)
 EOF
-if [ "$(babel-admin user list | wc -l)" = 0 ]; then
+if [ "$("$ADMIN" user list | wc -l)" = 0 ]; then
     echo
-    echo "There are no accounts yet: babel-admin user add NAME"
+    echo "There are no accounts yet: $ADMIN user add NAME"
 fi

@@ -95,7 +95,7 @@ pct push "$CTID" "$TMP" /root/setup-lxc.sh --perms 755
 pct exec "$CTID" -- bash /root/setup-lxc.sh --branch "$BRANCH" < /dev/null
 
 say "Account $BABEL_USER"
-printf '%s\n' "$PW" | pct exec "$CTID" -- babel-admin user add "$BABEL_USER"
+printf '%s\n' "$PW" | pct exec "$CTID" -- /usr/local/bin/babel-admin user add "$BABEL_USER"
 unset PW
 
 echo
