@@ -267,6 +267,7 @@ fn the_file_is_kept_with_the_project_and_can_be_removed() {
 fn a_whole_document_translated_with_the_skill() {
     let (original, source) = fixture();
     let mut e = Editor::open(original.clone(), source, Parts::new(), &project()).unwrap();
+    e.take_redraw();
     let md = std::fs::read_to_string(format!("{}/../../test/fixtures/sample.sv-SE.babel.md", env!("CARGO_MANIFEST_DIR"))).unwrap();
     let v = e.attach_segments(&md);
     assert_eq!(v["claude"], json!({ "matched": 46, "total": 46 }), "{v}");
@@ -289,6 +290,9 @@ fn a_whole_document_translated_with_the_skill() {
         let v = e.insert_claude();
         assert!(v["error"].is_null(), "{pid}: {v}");
         assert!(v["message"].is_null(), "{pid}: {v}");
+        // Only pages that exist are to be drawn (an insert may add a page and take it away again).
+        let (_, pages) = e.take_redraw();
+        assert!(pages.iter().all(|&p| p < e.page_count()), "{pid}: pages {pages:?} of {}", e.page_count());
         inserted += 1;
     }
     // The header and footer are reached by clicking on the page.
@@ -348,4 +352,32 @@ fn the_skill_script_makes_the_same_segments() {
         .collect::<Vec<_>>()
         .join("\n");
     assert_eq!(script.trim_end(), babel.trim_end());
+}
+
+/// Short translations make the document lose pages: what is to be drawn
+/// again must be pages that still exist (the desktop app crashed on one that didn't).
+#[test]
+fn inserting_never_asks_for_a_page_that_is_gone() {
+    let mut e = editor();
+    let long: Vec<String> = (28..=41).map(|k| format!("document:{k}")).collect();
+    let with: Vec<(&str, &str)> = long.iter().map(|p| (p.as_str(), "Kort.")).collect();
+    let md = translated(&e, &with);
+    e.attach_segments(&md);
+    let before = e.page_count();
+    e.take_redraw();
+    let mut shown = before;
+    for pid in long.iter().rev() {
+        caret_at(&mut e, pid);
+        let v = e.insert_claude();
+        assert!(v["error"].is_null(), "{pid}: {v}");
+        let n = e.page_count();
+        let (all, pages) = e.take_redraw();
+        assert!(pages.iter().all(|&p| p < n), "{pid}: pages {pages:?} of {n}");
+        // A page fewer: the view is given the whole new list.
+        if n != shown {
+            assert!(all && pages.len() == n, "{pid}: {shown} → {n} pages, all={all} {pages:?}");
+            shown = n;
+        }
+    }
+    assert!(e.page_count() < before, "the document got shorter: {before} → {}", e.page_count());
 }

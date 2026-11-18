@@ -163,6 +163,8 @@ pub struct Editor {
     last_edit: Option<Instant>,
     redraw: BTreeSet<usize>,
     redraw_all: bool,
+    /// How many pages the view was last told of.
+    drawn_pages: usize,
     src_redraw: bool,
     pub confirmed: BTreeSet<String>,
     /// Project metadata changed (done marks, ignored issues): to save.
@@ -265,6 +267,7 @@ impl Editor {
             last_edit: None,
             redraw: BTreeSet::new(),
             redraw_all: true,
+            drawn_pages: 0,
             src_redraw: true,
             confirmed,
             meta_dirty: false,
@@ -306,10 +309,15 @@ impl Editor {
     }
 
     /// The translation's pages to draw again (all, if their number changed).
+    /// The pages to draw again; all of them when there are more or fewer
+    /// than before (the view's list of pages changes), and never one that is
+    /// gone (an edit may add a page and take it away again).
     pub fn take_redraw(&mut self) -> (bool, Vec<usize>) {
-        let all = std::mem::take(&mut self.redraw_all);
-        let pages = std::mem::take(&mut self.redraw).into_iter().collect();
-        if all { (true, (0..self.page_count()).collect()) } else { (false, pages) }
+        let n = self.page_count();
+        let all = std::mem::take(&mut self.redraw_all) || n != self.drawn_pages;
+        self.drawn_pages = n;
+        let pages: Vec<usize> = std::mem::take(&mut self.redraw).into_iter().filter(|&p| p < n).collect();
+        if all { (true, (0..n).collect()) } else { (false, pages) }
     }
 
     /// Whether the original's pages must be drawn (once, at first).
