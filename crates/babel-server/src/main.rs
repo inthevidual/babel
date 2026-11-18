@@ -57,6 +57,21 @@ fn password() -> anyhow::Result<String> {
     Ok(p)
 }
 
+/// Ctrl+C, or SIGTERM (systemd stopping the service).
+async fn shutdown() {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
+    tracing::info!("stopping");
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -81,9 +96,7 @@ async fn main() -> anyhow::Result<()> {
                 cli.db.display()
             );
             axum::serve(listener, router(state))
-                .with_graceful_shutdown(async {
-                    let _ = tokio::signal::ctrl_c().await;
-                })
+                .with_graceful_shutdown(shutdown())
                 .await?;
         }
         Cmd::User(UserCmd::Add { name }) => {

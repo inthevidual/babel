@@ -17,7 +17,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use babel_core::{Error, Store, User, Version, store::Parts};
 use base64::Engine;
-use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
@@ -501,7 +500,7 @@ async fn events(
     State(state): State<AppState>,
     a: Auth,
     Path(id): Path<String>,
-) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
+) -> ApiResult<impl IntoResponse> {
     let pid = id.clone();
     let uid = a.user.id;
     state
@@ -512,7 +511,7 @@ async fn events(
         if c.user != uid || c.project != id {
             return None;
         }
-        Some(Ok(if c.deleted {
+        Some(Ok::<_, Infallible>(if c.deleted {
             Event::default().event("deleted").data("{}")
         } else {
             Event::default()
@@ -520,7 +519,9 @@ async fn events(
                 .data(json!({ "rev": c.rev, "origin": c.origin }).to_string())
         }))
     });
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+    // Behind nginx (Nginx Proxy Manager): pass events on at once, not buffered.
+    let no_buffering = [("x-accel-buffering", "no")];
+    Ok((no_buffering, Sse::new(stream).keep_alive(KeepAlive::default())))
 }
 
 // ── The web app ────────────────────────────────────────────────────────────
