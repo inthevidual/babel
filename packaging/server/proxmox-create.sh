@@ -48,8 +48,15 @@ unset PW2
 
 say "Template"
 pveam update >/dev/null
-TPL=$(pveam available --section system | awk '{print $2}' | grep -E '^debian-13-standard' | sort -V | tail -1)
-[ -n "$TPL" ] || TPL=$(pveam available --section system | awk '{print $2}' | grep -E '^debian-12-standard' | sort -V | tail -1)
+# The host's architecture: the list can hold the same template for several.
+case "$(uname -m)" in
+    x86_64) ARCH=amd64 ;;
+    aarch64) ARCH=arm64 ;;
+    *) ARCH=$(dpkg --print-architecture) ;;
+esac
+pick() { pveam available --section system | awk '{print $2}' | grep -E "^$1-standard_.*_${ARCH}\.tar\." | sort -V | tail -1; }
+TPL=$(pick debian-13)
+[ -n "$TPL" ] || TPL=$(pick debian-12)
 [ -n "$TPL" ] || { echo "No Debian template found (pveam available)." >&2; exit 1; }
 if ! pveam list "$TPL_STORAGE" | grep -q "$TPL"; then
     pveam download "$TPL_STORAGE" "$TPL"
@@ -63,8 +70,15 @@ NET="name=eth0,bridge=$BRIDGE,ip=$IP"
 pct create "$CTID" "$TPL_STORAGE:vztmpl/$TPL" \
     --hostname "$CT_NAME" --cores 2 --memory 2048 --swap 1024 \
     --rootfs "$STORAGE:8" --net0 "$NET" \
-    --unprivileged 1 --features nesting=1 --onboot 1 --start 1
-echo "Container $CTID ($CT_NAME) started."
+    --unprivileged 1 --features nesting=1 --onboot 1
+if ! pct start "$CTID" || [ "$(pct status "$CTID" | awk '{print $2}')" != running ]; then
+    echo >&2
+    echo "Container $CTID was created but does not start. Proxmox's reason:" >&2
+    pct start "$CTID" --debug 2>&1 | grep -iE 'error|fail|denied|unsupported|cannot|no such' | tail -15 >&2 || true
+    echo "Full log: pct start $CTID --debug    Remove it: pct destroy $CTID" >&2
+    exit 1
+fi
+echo "Container $CTID ($CT_NAME) is running."
 
 # Wait for its network (DHCP) before installing.
 for _ in $(seq 1 60); do
