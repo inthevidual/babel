@@ -48,14 +48,23 @@ pub enum Piece {
 }
 
 impl Piece {
-    fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         match self {
             Piece::Text { text, .. } | Piece::Atom { text, .. } | Piece::Fixed { text, .. } => text,
             Piece::Br { .. } => "\n",
         }
     }
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.text().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// What can't be typed over: a picture, a note mark, a field's result.
+    pub fn is_object(&self) -> bool {
+        matches!(self, Piece::Fixed { .. }) && !self.is_empty()
     }
 }
 
@@ -130,6 +139,8 @@ pub struct Session {
     prints: Vec<String>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
+    /// Inside [`Session::group`]: typing never joins an earlier step.
+    grouping: bool,
 }
 
 fn part_key(path: &str) -> &str {
@@ -193,6 +204,7 @@ impl Session {
             prints,
             undo: vec![],
             redo: vec![],
+            grouping: false,
         })
     }
 
@@ -478,9 +490,30 @@ impl Session {
         Ok((caret, pages))
     }
 
+    /// Several edits as one step of undo; the pages to draw again are the
+    /// edits' own. If one fails, undo still takes back those before it.
+    pub fn group<T>(&mut self, f: impl FnOnce(&mut Session) -> Result<T, EditError>) -> Result<T, EditError> {
+        let before = self.undo.len();
+        let was = std::mem::replace(&mut self.grouping, true);
+        let r = f(self);
+        self.grouping = was;
+        // The first step holds the state before them all.
+        if self.undo.len() > before + 1 {
+            self.undo.truncate(before + 1);
+        }
+        r
+    }
+
     /// Toggles bold, italic or underline over a range of one paragraph
     /// (off if the start of the range has it, else on).
     pub fn toggle(&mut self, a: &Pos, b: &Pos, style: Style) -> Result<Vec<usize>, EditError> {
+        let start = if a <= b { a } else { b };
+        let on = !self.has_style(start, style);
+        self.set_style(a, b, style, on)
+    }
+
+    /// Sets bold, italic or underline on or off over a range of one paragraph.
+    pub fn set_style(&mut self, a: &Pos, b: &Pos, style: Style, on: bool) -> Result<Vec<usize>, EditError> {
         let (a, b) = if a <= b { (a.clone(), b.clone()) } else { (b.clone(), a.clone()) };
         if a.story != b.story || a.path != b.path {
             return Err(EditError::AcrossParagraphs);
@@ -488,7 +521,6 @@ impl Session {
         if a.off == b.off {
             return Ok(vec![]);
         }
-        let on = !self.has_style(&a, style);
         let snap = self.snapshot(&a)?;
         let para = self.para_state(&a)?;
         let mut out = vec![];
@@ -555,7 +587,7 @@ impl Session {
     fn record(&mut self, snap: Snapshot, typing: bool, after: &Pos) {
         self.redo.clear();
         // Typing goes on in the same step while it continues where it left off.
-        if typing {
+        if typing && !self.grouping {
             if let Some(last) = self.undo.last_mut() {
                 if let Some((t, at)) = &last.typing {
                     if last.pid == snap.pid && at == &snap.caret && t.elapsed() < Duration::from_secs(3) {

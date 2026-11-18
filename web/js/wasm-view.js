@@ -217,6 +217,8 @@ export class WasmView {
     const parts = JSON.parse(this.editor.takeDirty());
     const meta = JSON.parse(this.editor.projectMeta(JSON.stringify(this.project)));
     Object.assign(this.project, { confirmed: meta.confirmed, ignored: meta.ignored, stats: meta.stats });
+    if (meta.claudeSegments) this.project.claudeSegments = meta.claudeSegments;
+    else delete this.project.claudeSegments;
     this.hooks.parts(parts, meta);
   }
 
@@ -446,6 +448,32 @@ export class WasmView {
     follow(this.srcScroll, this.tgtScroll);
   }
 
+  // A segment file translated by Claude (the babel-translate skill), to insert paragraph by paragraph.
+  attachClaude() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.md,.markdown,.txt,text/markdown,text/plain';
+    input.addEventListener('change', async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      this.answer(this.editor.attachSegments(await f.text()));
+      this.flushJournal();
+    });
+    input.click();
+  }
+
+  // The original as a segment file, for Claude to translate.
+  exportSegments() {
+    const name = this.project.fileName || `${this.project.name || 'document'}.docx`;
+    const md = this.editor.exportSegments(name, this.project.targetLang || '');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+    a.download = `${this.project.name || 'document'} segments.md`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    this.hooks.toast('Saved. Give the file to Claude with the Babel translate skill, then attach the translation it returns.');
+  }
+
   registerMenu() {
     const st = () => this.state;
     const sel = () => (st().selection ?? []).length > 0;
@@ -460,6 +488,10 @@ export class WasmView {
       .add({ group: 'para', label: () => (para()?.done ? 'Unmark as done' : 'Mark as done'), hint: 'Ctrl+Enter', when: tgt, enabled: () => !!para(), run: () => this.key(QT.Enter, '', CTRL) })
       .add({ group: 'para', label: 'Revert paragraph to the original', when: tgt, enabled: () => !!para()?.edited, run: () => this.answer(this.editor.revert()) })
       .add({ group: 'para', label: 'Copy the original text', when: tgt, enabled: () => !!para(), run: () => write(this.editor.originalText() ?? '') })
+      .add({ group: 'claude', label: 'Insert Claude’s translation', when: ctx => tgt(ctx) && !!st().claude, enabled: () => !!para()?.claude, run: () => this.answer(this.editor.insertClaude()) })
+      .add({ group: 'claude', label: () => (st().claude ? 'Replace Claude’s translation…' : 'Attach Claude’s translation…'), when: tgt, run: () => this.attachClaude() })
+      .add({ group: 'claude', label: 'Export segments for Claude', when: tgt, run: () => this.exportSegments() })
+      .add({ group: 'claude', label: 'Remove Claude’s translation', when: ctx => tgt(ctx) && !!st().claude, run: () => this.answer(this.editor.removeSegments()) })
       .add({ group: 'src', label: 'Copy', hint: 'Ctrl+C', when: ctx => src(ctx) && !!ctx.text, run: ctx => write(ctx.text) })
       .add({ group: 'src', label: ctx => `Look up “${ctx.lookup}” in Merriam-Webster`, when: ctx => src(ctx) && !!ctx.lookup, run: ctx => open(`https://www.merriam-webster.com/dictionary/${encodeURIComponent(ctx.lookup)}`, '_blank', 'noopener') })
       .add({ group: 'src', label: 'Copy link', sub: ctx => ctx.link, when: ctx => src(ctx) && !!ctx.link, run: () => { const c = this.editor.copySourceLink(); if (c) { write(c); this.hooks.toast(`Link copied: ${c}`); } } })

@@ -1,0 +1,191 @@
+[
+{
+"wait": 1500
+},
+{
+"name": "nothing attached at first",
+"expect": {
+"claude": null
+}
+},
+{
+"name": "attach Claude's translation",
+"attach": "/home/jesper/claude/babel/test/ui/claude-sample.md",
+"wait": 600
+},
+{
+"name": "attach Claude's translation",
+"expect": {
+"claude": {
+"matched": 2,
+"total": 46
+}
+}
+},
+{
+"name": "a paragraph with a segment",
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"name": "a paragraph with a segment",
+"expect": {
+"para": "document:2",
+"paraClaude": true
+}
+},
+{
+"name": "right-click shows the item, enabled",
+"rightClick": [
+1000,
+282
+],
+"wait": 500
+},
+{
+"name": "right-click shows the item, enabled",
+"expect": {
+"menuInsert": {
+"open": true,
+"visible": true,
+"enabled": true
+}
+}
+},
+{
+"name": "choosing it inserts the translation",
+"menuInsert": true,
+"wait": 600
+},
+{
+"name": "choosing it inserts the translation",
+"expect": {
+"charsBelow": 5534
+}
+},
+{
+"log": "inserted"
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"name": "the inserted text is in the paragraph",
+"x": 1000,
+"y": 282,
+"click": 2
+},
+{
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"name": "the inserted text is in the paragraph",
+"expect": {
+"selectedStarts": "Denna rapport är konfidentiell"
+}
+},
+{
+"name": "one undo restores it",
+"x": 1000,
+"y": 282,
+"click": 1,
+"wait": 700
+},
+{
+"name": "one undo restores it",
+"key": 90,
+"mods": 67108864,
+"wait": 500
+},
+{
+"name": "one undo restores it",
+"expect": {
+"chars": 5534
+}
+},
+{
+"name": "a paragraph without a segment",
+"x": 1000,
+"y": 199,
+"click": 1
+},
+{
+"name": "a paragraph without a segment",
+"expect": {
+"paraClaude": false
+}
+},
+{
+"name": "its item is disabled",
+"rightClick": [
+1000,
+199
+],
+"wait": 500
+},
+{
+"name": "its item is disabled",
+"expect": {
+"menuInsert": {
+"open": true,
+"visible": true,
+"enabled": false
+}
+}
+},
+{
+"key": 16777216,
+"wait": 300
+},
+{
+"name": "the menu, for a look",
+"x": 1000,
+"y": 282,
+"click": 1
+},
+{
+"rightClick": [
+1000,
+282
+],
+"wait": 500
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/claude-menu.png"
+},
+{
+"key": 16777216,
+"wait": 300
+},
+{
+"name": "kept after closing and reopening",
+"x": 22,
+"y": 24,
+"click": 1,
+"wait": 900
+},
+{
+"x": 400,
+"y": 85,
+"click": 1,
+"wait": 1500
+},
+{
+"name": "kept after closing and reopening",
+"expect": {
+"depth": 2,
+"claude": {
+"matched": 2,
+"total": 46
+}
+}
+},
+{
+"log": "end"
+}
+]

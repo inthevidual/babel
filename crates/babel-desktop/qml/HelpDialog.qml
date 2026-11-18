@@ -26,6 +26,7 @@ Kirigami.Dialog {
         ["Ctrl + A", "Select the paragraph"],
         ["Right-click", "In the translation: revert, copy the original. In the original: copy, look up in Merriam-Webster, copy a link"],
         ["Click in the original", "Go to the paragraph's translation"],
+        ["⋮ › Attach Claude's Translation…", "A segment file Claude translated (the babel-translate skill); then right-click a paragraph › Insert Claude's Translation"],
     ]
 
     ColumnLayout {

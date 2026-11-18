@@ -217,6 +217,9 @@ Kirigami.ApplicationWindow {
                 sourceSelected: Backend.testSourceSelected(),
                 targetY: Math.round(editor.targetY()),
                 chars: editor.stats ? editor.stats.tgtChars : null,
+                claude: editor.claude,
+                paraClaude: editor.paragraph ? !!editor.paragraph.claude : null,
+                menu: editor.testMenu(),
             });
         }
         onTriggered: {
@@ -247,6 +250,15 @@ Kirigami.ApplicationWindow {
                     Backend.testMouse(0, x0 + (x1 - x0) * i / 12, y0 + (y1 - y0) * i / 12, 0);
                 Backend.testMouse(2, x1, y1, 0);
             }
+            if (s.rightClick) {
+                Backend.testMouse(0, s.rightClick[0], s.rightClick[1], 0);
+                Backend.testMouse(4, s.rightClick[0], s.rightClick[1], 0);
+                Backend.testMouse(5, s.rightClick[0], s.rightClick[1], 0);
+            }
+            if (s.attach)
+                editor.answer(Backend.nativeAttachClaude("file://" + s.attach), false);
+            if (s.menuInsert)
+                editor.testTriggerInsert();
             if (s.key !== undefined)
                 Backend.testKey(s.key, s.text || "", s.mods || 0);
             if (s.grab)
@@ -261,6 +273,9 @@ Kirigami.ApplicationWindow {
                         : k === "selectedSome" ? (st.selected.length > 0) === want
                         : k === "charsBelow" ? st.chars < want
                         : k === "scrolled" ? st.targetY !== want
+                        : k === "selectedEquals" ? st.selected === want
+                        : k === "menuInsert" ? JSON.stringify(st.menu) === JSON.stringify(want)
+                        : k === "claude" ? JSON.stringify(st.claude) === JSON.stringify(want)
                         : st[k] === want;
                     const ok = got === true || (k in st && got === true);
                     console.warn(ok ? "UITEST ok  " : "UITEST FAIL", s.name || "", k, JSON.stringify(want), ok ? "" : state());

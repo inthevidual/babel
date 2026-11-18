@@ -49,14 +49,18 @@ void babel_test_mouse(int kind, double x, double y, int modifiers)
         return;
     const QPointF p(x, y);
     const auto mods = Qt::KeyboardModifiers(modifiers);
+    // 4, 5: right button press, release.
+    const bool right = kind == 4 || kind == 5;
+    if (right)
+        kind -= 3;
     const auto type = kind == 0 ? QEvent::MouseMove : kind == 1 ? QEvent::MouseButtonPress : kind == 2 ? QEvent::MouseButtonRelease : QEvent::MouseButtonDblClick;
     static bool down = false;
     if (kind == 1 || kind == 3)
         down = true;
     if (kind == 2)
         down = false;
-    const Qt::MouseButton button = kind == 0 ? Qt::NoButton : Qt::LeftButton;
-    const Qt::MouseButtons buttons = down ? Qt::LeftButton : Qt::NoButton;
+    const Qt::MouseButton button = kind == 0 ? Qt::NoButton : right ? Qt::RightButton : Qt::LeftButton;
+    const Qt::MouseButtons buttons = (kind == 1) ? Qt::MouseButtons(button) : (down && !right ? Qt::LeftButton : Qt::NoButton);
     QMouseEvent e(type, p, p, w->mapToGlobal(p), button, buttons, mods);
     QCoreApplication::sendEvent(w, &e);
 }

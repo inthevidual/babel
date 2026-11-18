@@ -214,6 +214,30 @@ pub mod qobject {
         #[cxx_name = "nativeRevert"]
         fn native_revert(self: Pin<&mut Backend>) -> QString;
 
+        /// Replaces the paragraph at the caret with Claude's translation of it.
+        #[qinvokable]
+        #[cxx_name = "nativeInsertClaude"]
+        fn native_insert_claude(self: Pin<&mut Backend>) -> QString;
+
+        /// Attaches a segment file (Claude's translation) to the open translation.
+        #[qinvokable]
+        #[cxx_name = "nativeAttachClaude"]
+        fn native_attach_claude(self: Pin<&mut Backend>, url: &QUrl) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "nativeRemoveClaude"]
+        fn native_remove_claude(self: Pin<&mut Backend>) -> QString;
+
+        /// Writes the original as a segment file for Claude; "" or the error.
+        #[qinvokable]
+        #[cxx_name = "nativeExportSegments"]
+        fn native_export_segments(self: Pin<&mut Backend>, url: &QUrl) -> QString;
+
+        /// The segment file's name for the open translation ("name segments.md").
+        #[qinvokable]
+        #[cxx_name = "segmentsName"]
+        fn segments_name(self: &Backend, id: &QString) -> QString;
+
         /// Ctrl+K: links the selection to the copied link or the clipboard's address.
         #[qinvokable]
         #[cxx_name = "nativePasteLink"]
@@ -603,6 +627,37 @@ impl qobject::Backend {
 
     fn native_revert(self: Pin<&mut Self>) -> QString {
         s(&native::revert())
+    }
+
+    fn native_insert_claude(self: Pin<&mut Self>) -> QString {
+        s(&native::insert_claude())
+    }
+
+    fn native_attach_claude(self: Pin<&mut Self>, url: &QUrl) -> QString {
+        match path_of(url) {
+            Some(p) => s(&native::attach_claude(&p)),
+            None => s(&json!({ "error": "That is not a file on this computer." })),
+        }
+    }
+
+    fn native_remove_claude(self: Pin<&mut Self>) -> QString {
+        s(&native::remove_claude())
+    }
+
+    fn native_export_segments(self: Pin<&mut Self>, url: &QUrl) -> QString {
+        let Some(p) = path_of(url) else { return QString::from("That is not a file on this computer.") };
+        match native::export_segments(&p) {
+            Ok(()) => QString::default(),
+            Err(e) => QString::from(&e.to_string()),
+        }
+    }
+
+    fn segments_name(&self, id: &QString) -> QString {
+        let a = app();
+        let id = id.to_string();
+        let meta = a.db(|st| st.get_project(&a.user, &id)).unwrap_or(Value::Null);
+        let name = meta["name"].as_str().unwrap_or("document");
+        QString::from(&format!("{name} segments.md"))
     }
 
     fn native_paste_link(self: Pin<&mut Self>) -> QString {

@@ -8,13 +8,14 @@
 //! Answers are JSON, the same shape for both: see [`Editor::state`].
 
 pub mod proof;
+pub mod segments;
 
 use std::collections::{BTreeSet, HashMap};
 
 use babel_docx::ooxml::{self, Link, LinkTarget, Part, StyleBit};
 use babel_docx::para::find_paragraph;
 use babel_docx::tree::Tree;
-use babel_pages::edit::{EditError, Session, Style};
+use babel_pages::edit::{EditError, Piece, Session, Style};
 use babel_pages::{Laid, Parts};
 use serde_json::{json, Value};
 use std::time::Duration;
@@ -172,6 +173,18 @@ pub struct Editor {
     /// The link under the last right-click on the original.
     copied_candidate: Option<Copied>,
     styles_xml: Option<String>,
+    /// Claude's translation, segment by segment, when one is attached.
+    claude: Option<Claude>,
+}
+
+/// A segment file attached to the translation (see [`segments`]).
+struct Claude {
+    md: String,
+    segments: Vec<segments::Segment>,
+    /// Paragraph id → its segment.
+    by_pid: HashMap<String, usize>,
+    /// Paragraphs that are segments.
+    total: usize,
 }
 
 impl Editor {
@@ -179,7 +192,15 @@ impl Editor {
     /// the translated parts stored (path → XML, over the originals'), and the
     /// project's metadata (`targetLang`, `confirmed`, `ignored`).
     pub fn open(original: Vec<u8>, source_parts: Parts, translated: Parts, project: &Value) -> anyhow::Result<Editor> {
-        let text_parts: Vec<String> = source_parts.keys().cloned().collect();
+        // The package's order (the body, then headers, footers and notes as it lists them).
+        let mut text_parts: Vec<String> = babel_docx::package::open_package(&original)
+            .map(|p| p.text_parts.into_iter().filter(|x| source_parts.contains_key(x)).collect())
+            .unwrap_or_default();
+        for k in source_parts.keys() {
+            if !text_parts.contains(k) {
+                text_parts.push(k.clone());
+            }
+        }
         let mut target = source_parts.clone();
         target.extend(translated);
         // Runs Babel generated in an earlier session, or that a link split off
@@ -228,7 +249,7 @@ impl Editor {
             }
         }
         let confirmed = project["confirmed"].as_array().map(|v| v.iter().filter_map(|x| x.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        Ok(Editor {
+        let mut editor = Editor {
             session,
             source,
             source_parts,
@@ -251,7 +272,12 @@ impl Editor {
             journal: BTreeSet::new(),
             copied_candidate: None,
             styles_xml,
-        })
+            claude: None,
+        };
+        if let Some(md) = project["claudeSegments"].as_str() {
+            editor.claude = editor.index_segments(md).ok();
+        }
+        Ok(editor)
     }
 
     /// Settings for proofing: picky mode and the personal dictionary.
@@ -363,6 +389,7 @@ impl Editor {
                 "edited": m.tgt_text != m.src_text,
                 "srcChars": ooxml::count_chars(&m.src_text),
                 "tgtChars": ooxml::count_chars(&m.tgt_text),
+                "claude": self.claude.as_ref().is_some_and(|c| c.by_pid.contains_key(&pid)),
             }))
         });
         json!({
@@ -374,6 +401,7 @@ impl Editor {
             "canRedo": self.session.can_redo(),
             "issue": self.issue_at_caret(),
             "paragraph": para,
+            "claude": self.claude.as_ref().map(|c| json!({ "matched": c.by_pid.len(), "total": c.total })),
             "stats": self.stats(),
         })
     }
@@ -529,6 +557,14 @@ impl Editor {
         ignored.sort();
         m["ignored"] = json!(ignored);
         m["stats"] = self.stats();
+        match &self.claude {
+            Some(c) => m["claudeSegments"] = json!(c.md),
+            None => {
+                if let Some(o) = m.as_object_mut() {
+                    o.remove("claudeSegments");
+                }
+            }
+        }
         m
     }
 
@@ -869,6 +905,383 @@ impl Editor {
         v
     }
 
+    // ── Claude's translation (a segment file) ─────────────────────────────
+
+    /// The original's paragraphs that are segments, in order, walked.
+    fn source_segments(&self) -> Vec<(String, Vec<segments::Item>)> {
+        segments::of_parts(&self.source_parts, &self.text_parts)
+    }
+
+    /// Matches a segment file's segments to this document's paragraphs: by
+    /// id where its text agrees, else by text (in order, for repeated text).
+    fn index_segments(&self, md: &str) -> Result<Claude, String> {
+        let segs = segments::parse(md)?;
+        let paras = self.source_segments();
+        let keys: Vec<String> = paras.iter().map(|(_, items)| segments::key_of_items(items)).collect();
+        let agree = |a: &str, b: &str| a == b || segments::tight(a) == segments::tight(b);
+        let at: HashMap<&str, usize> = paras.iter().enumerate().map(|(k, (pid, _))| (pid.as_str(), k)).collect();
+        let mut by_pid: HashMap<String, usize> = HashMap::new();
+        let mut taken = vec![false; paras.len()];
+        let mut pending = vec![];
+        for (si, s) in segs.iter().enumerate() {
+            if s.target.trim().is_empty() {
+                continue;
+            }
+            let key = segments::key_of_markup(&s.source);
+            match s.id.as_deref().and_then(|id| at.get(id)) {
+                Some(&k) if !taken[k] && agree(&keys[k], &key) => {
+                    taken[k] = true;
+                    by_pid.insert(paras[k].0.clone(), si);
+                }
+                _ => pending.push((si, key)),
+            }
+        }
+        // By text: the next paragraph with that text, in order.
+        let mut first_for_key: HashMap<String, usize> = HashMap::new();
+        for (si, key) in &pending {
+            first_for_key.entry(segments::tight(key)).or_insert(*si);
+            let found = (0..paras.len()).find(|&k| !taken[k] && keys[k] == *key).or_else(|| (0..paras.len()).find(|&k| !taken[k] && agree(&keys[k], key)));
+            if let Some(k) = found {
+                taken[k] = true;
+                by_pid.insert(paras[k].0.clone(), *si);
+            }
+        }
+        // More paragraphs with the same text than segments: the same translation.
+        for (k, (pid, _)) in paras.iter().enumerate() {
+            if !taken[k] {
+                if let Some(&si) = first_for_key.get(&segments::tight(&keys[k])) {
+                    by_pid.insert(pid.clone(), si);
+                }
+            }
+        }
+        Ok(Claude { md: md.to_owned(), segments: segs, by_pid, total: paras.len() })
+    }
+
+    /// Attaches a segment file (Claude's translation) to the translation.
+    pub fn attach_segments(&mut self, md: &str) -> Value {
+        let res = self.index_segments(md);
+        let mut msg = None;
+        let err = match res {
+            Ok(c) if c.by_pid.is_empty() => Some("None of that file's translated segments match this document's paragraphs. Was it made from this document?".to_owned()),
+            Ok(c) => {
+                msg = Some(format!("Claude's translation attached: {} of {} paragraphs have one. Right-click a paragraph and choose Insert Claude's Translation.", c.by_pid.len(), c.total));
+                self.claude = Some(c);
+                self.meta_dirty = true;
+                None
+            }
+            Err(e) => Some(e),
+        };
+        let mut v = self.state();
+        if let Some(m) = msg {
+            v["message"] = json!(m);
+        }
+        if let Some(e) = err {
+            v["error"] = json!(e);
+        }
+        v
+    }
+
+    /// Detaches Claude's translation.
+    pub fn remove_segments(&mut self) -> Value {
+        if self.claude.take().is_some() {
+            self.meta_dirty = true;
+        }
+        self.state()
+    }
+
+    /// The document as a segment file to translate: every paragraph with
+    /// something to translate, the original quoted, the translation empty.
+    pub fn export_segments(&self, document: &str, target_lang: &str) -> String {
+        let mut s = segments::header(document, target_lang);
+        for (n, (pid, items)) in self.source_segments().iter().enumerate() {
+            s.push_str(&segments::write_segment(n + 1, Some(pid), &segments::markup(items), ""));
+        }
+        s
+    }
+
+    /// Replaces the paragraph at the caret with Claude's translation of it
+    /// (one step of undo).
+    pub fn insert_claude(&mut self) -> Value {
+        let res = self.insert_claude_inner();
+        let mut v = self.state();
+        match res {
+            Ok(Some(note)) => v["message"] = json!(note),
+            Ok(None) => {}
+            Err(e) => v["error"] = json!(e),
+        }
+        v
+    }
+
+    fn insert_claude_inner(&mut self) -> Result<Option<String>, String> {
+        let pos = self.caret.clone().ok_or("Click in a paragraph of the translation first.")?;
+        let pid = self.pid_at(&pos).ok_or("This paragraph can't be edited.")?;
+        let c = self.claude.as_ref().ok_or("No translation by Claude is attached to this document.")?;
+        let si = *c.by_pid.get(&pid).ok_or("Claude's translation has no segment for this paragraph.")?;
+        let toks = segments::tokens(&c.segments[si].target);
+        let start = Pos::new(pos.story, pos.path.clone(), 0);
+        let pieces = self.session.pieces(&start).map_err(|e| e.to_string())?;
+        let text = self.session.text_of(&start).unwrap_or("").to_owned();
+
+        // The runs that make the objects the segment file numbers {1}, {2}…,
+        // and those that are a link's text.
+        let numbered = {
+            let path = self.meta.get(&pid).map(|m| m.path.clone()).unwrap_or_default();
+            let xml = self.session.parts.get(&path).ok_or("The paragraph is missing.")?;
+            let range = find_paragraph(xml, &pid).ok_or("The paragraph is missing.")?;
+            let t = Tree::parse(&xml[range]).map_err(|e| e.to_string())?;
+            let (items, links) = segments::walk_with_links(&t, t.root);
+            let numbered: std::collections::HashSet<String> = items
+                .iter()
+                .flat_map(|it| match it {
+                    segments::Item::Obj(rids) => rids.clone(),
+                    _ => vec![],
+                })
+                .collect();
+            let count = items.iter().filter(|it| matches!(it, segments::Item::Obj(_))).count();
+            (numbered, links, count)
+        };
+        let (numbered, links, count) = (numbered.0, numbered.1, numbered.2);
+        // Which pieces are the numbered objects: by their runs; or, when that
+        // misses some (a page number the layout draws itself has no run), all
+        // of them in order, if there are just as many.
+        let by_run: Vec<bool> = pieces.iter().map(|p| p.is_object() && matches!(p, Piece::Fixed { rid: Some(r), .. } if numbered.contains(r))).collect();
+        let all_objects = pieces.iter().filter(|p| p.is_object()).count();
+        let numbered_piece: Vec<bool> = if by_run.iter().filter(|&&x| x).count() != count && all_objects == count {
+            pieces.iter().map(|p| p.is_object()).collect()
+        } else {
+            by_run
+        };
+
+        // The paragraph cut at its numbered objects and tabs (which stay put)
+        // into stretches, each a row of regions: plain text, or a link's text.
+        // A region may be cut further by what the file doesn't number (field
+        // markers, content controls), which stays put too.
+        let mut groups: Vec<Vec<Region>> = vec![vec![Region { link: false, subs: vec![] }]];
+        let mut marks = String::new();
+        let (mut off, mut from) = (0usize, 0usize);
+        fn close(groups: &mut [Vec<Region>], from: usize, to: usize) {
+            groups.last_mut().unwrap().last_mut().unwrap().subs.push((from, to));
+        }
+        for (pi, p) in pieces.iter().enumerate() {
+            let end = off + p.len();
+            let tab = matches!(p, Piece::Atom { text, .. } if text == "\t");
+            let object = numbered_piece[pi];
+            if object || tab {
+                close(&mut groups, from, off);
+                marks.push(if tab { 't' } else { 'o' });
+                groups.push(vec![Region { link: false, subs: vec![] }]);
+                from = end;
+            } else if matches!(p, Piece::Fixed { .. }) {
+                close(&mut groups, from, off);
+                from = end;
+            } else if !p.is_empty() {
+                let in_link = match p {
+                    Piece::Text { rid: Some(r), .. } | Piece::Atom { rid: r, .. } => links.contains(r),
+                    Piece::Text { rid: None, base, .. } => base.as_ref().is_some_and(|b| links.contains(b)),
+                    _ => groups.last().unwrap().last().unwrap().link,
+                };
+                if in_link != groups.last().unwrap().last().unwrap().link {
+                    close(&mut groups, from, off);
+                    from = off;
+                    groups.last_mut().unwrap().push(Region { link: in_link, subs: vec![] });
+                }
+            }
+            off = end;
+        }
+        close(&mut groups, from, off);
+        // Only what can be typed over counts as a stretch's text.
+        let typed = |a: usize, b: usize| -> String {
+            let mut o = String::new();
+            let mut at = 0;
+            for p in &pieces {
+                let end = at + p.len();
+                if !matches!(p, Piece::Fixed { .. }) && end > a && at < b {
+                    o.push_str(&text[at.max(a)..end.min(b)]);
+                }
+                at = end;
+            }
+            o
+        };
+
+        // Claude's text between its placeholders.
+        let mut chunks: Vec<Vec<Span>> = vec![vec![]];
+        let mut order = vec![];
+        let mut claude_marks = String::new();
+        for t in toks {
+            match t {
+                segments::Tok::Obj(n) => {
+                    order.push(n);
+                    claude_marks.push('o');
+                    chunks.push(vec![]);
+                }
+                segments::Tok::Tab => {
+                    claude_marks.push('t');
+                    chunks.push(vec![]);
+                }
+                segments::Tok::Text { s, b, i, l } => chunks.last_mut().unwrap().push((s, b, i, l)),
+            }
+        }
+        while chunks.len() > groups.len() {
+            let last = chunks.pop().unwrap();
+            chunks.last_mut().unwrap().extend(last);
+        }
+        chunks.resize(groups.len(), vec![]);
+
+        // Unmarked text takes the paragraph's usual look (a heading stays bold).
+        let usual = |s: &Session, style: Style| {
+            let (mut with, mut all) = (0usize, 0usize);
+            let mut o = 0;
+            for p in &pieces {
+                if let Piece::Text { text: t, .. } = p {
+                    for (k, ch) in t.char_indices() {
+                        if !ch.is_whitespace() {
+                            all += 1;
+                            with += s.has_style(&Pos::new(pos.story, pos.path.clone(), o + k), style) as usize;
+                        }
+                    }
+                }
+                o += p.len();
+            }
+            all > 0 && with * 2 > all
+        };
+        let (usual_b, usual_i) = (usual(&self.session, Style::Bold), usual(&self.session, Style::Italic));
+
+        // Each stretch's new text and its formatting.
+        let mut plan: Vec<(usize, usize, String, Vec<(usize, bool, bool)>)> = vec![];
+        let mut links_off = false;
+        for (regions, spans) in groups.iter().zip(chunks) {
+            let original: String = regions.iter().flat_map(|r| r.subs.iter()).map(|&(a, b)| typed(a, b)).collect();
+            let spans = edges_like(spans, &original);
+            // Regions with text, neighbours of a kind together; the same for Claude's.
+            let mut shape: Vec<(bool, Vec<(usize, usize)>)> = vec![];
+            for r in regions {
+                if r.subs.iter().all(|&(a, b)| typed(a, b).is_empty()) {
+                    if let Some(last) = shape.last_mut() {
+                        last.1.extend(r.subs.iter().copied());
+                    } else {
+                        shape.push((r.link, r.subs.clone()));
+                    }
+                    continue;
+                }
+                match shape.last_mut() {
+                    Some(last) if last.0 == r.link || last.1.iter().all(|&(a, b)| typed(a, b).is_empty()) => {
+                        last.0 = r.link;
+                        last.1.extend(r.subs.iter().copied());
+                    }
+                    _ => shape.push((r.link, r.subs.clone())),
+                }
+            }
+            let mut parts: Vec<(bool, Vec<Span>)> = vec![];
+            for sp in spans {
+                match parts.last_mut() {
+                    Some(last) if last.0 == sp.3 => last.1.push(sp),
+                    _ => parts.push((sp.3, vec![sp])),
+                }
+            }
+            let kinds = |v: &[(bool, Vec<Span>)]| v.iter().map(|p| p.0).collect::<Vec<_>>();
+            let fits = shape.len() == parts.len() && shape.iter().map(|r| r.0).collect::<Vec<_>>() == kinds(&parts);
+            let assignment: Vec<(Vec<(usize, usize)>, Vec<Span>)> = if fits || (shape.len() <= 1 && parts.iter().all(|p| !p.0)) {
+                shape.into_iter().map(|r| r.1).zip(parts.into_iter().map(|p| p.1).chain(std::iter::repeat(vec![]))).collect()
+            } else {
+                // The links don't line up: all of it over the stretch, in proportion.
+                links_off |= parts.iter().any(|p| p.0) || shape.iter().any(|r| r.0);
+                vec![(shape.into_iter().flat_map(|r| r.1).collect(), parts.into_iter().flat_map(|p| p.1).collect())]
+            };
+            for (subs, spans) in assignment {
+                let originals: Vec<String> = subs.iter().map(|&(a, b)| typed(a, b)).collect();
+                let original: String = originals.concat();
+                let all: String = spans.iter().map(|x| x.0.as_str()).collect();
+                let cuts = cut_like(&all, &original, &originals);
+                let mut prev = 0;
+                for (k, &(a, b)) in subs.iter().enumerate() {
+                    let cut = cuts[k];
+                    plan.push((a, b, all[prev..cut].to_owned(), slice_spans(&spans, prev, cut)));
+                    prev = cut;
+                }
+            }
+        }
+        let (story, path) = (pos.story, pos.path.clone());
+        let at = move |o: usize| Pos::new(story, path.clone(), o);
+        let pages = self
+            .session
+            .group(|s| {
+                let mut pages = vec![];
+                for (a, b, t, _) in plan.iter().rev() {
+                    let (a, b) = (*a, *b);
+                    if a == b || t.is_empty() {
+                        if a != b || !t.is_empty() {
+                            pages.extend(s.replace(&at(a), &at(b), t)?.1);
+                        }
+                        continue;
+                    }
+                    // Into the stretch's own run: after its first character (at a run's
+                    // edge, new text would join the run before, as typing does), then
+                    // the old text around it goes.
+                    let now = s.text_of(&at(0)).unwrap_or("").to_owned();
+                    let c1 = a + now[a..].chars().next().map(char::len_utf8).unwrap_or(0);
+                    pages.extend(s.replace(&at(c1), &at(c1), t)?.1);
+                    let n = t.len();
+                    if b > c1 {
+                        pages.extend(s.replace(&at(c1 + n), &at(b + n), "")?.1);
+                    }
+                    pages.extend(s.replace(&at(a), &at(c1), "")?.1);
+                }
+                // Bold and italic as Claude marked them.
+                let mut ranges = vec![];
+                let mut shift = 0isize;
+                for (a, b, t, spans) in &plan {
+                    let mut o = (*a as isize + shift) as usize;
+                    for &(len, bb, ii) in spans {
+                        ranges.push((o, o + len, bb || usual_b, ii || usual_i));
+                        o += len;
+                    }
+                    shift += t.len() as isize - (*b as isize - *a as isize);
+                }
+                let now = s.text_of(&at(0)).unwrap_or("").to_owned();
+                for style in [Style::Bold, Style::Italic] {
+                    for &(x, y, bb, ii) in &ranges {
+                        let want = if style == Style::Bold { bb } else { ii };
+                        let offs: Vec<usize> = now.char_indices().map(|(k, _)| k).filter(|&k| k >= x && k < y).collect();
+                        let mut k = 0;
+                        while k < offs.len() {
+                            if s.has_style(&at(offs[k]), style) == want {
+                                k += 1;
+                                continue;
+                            }
+                            let mut e = k;
+                            while e < offs.len() && s.has_style(&at(offs[e]), style) != want {
+                                e += 1;
+                            }
+                            let end = offs.get(e).copied().unwrap_or(y);
+                            pages.extend(s.set_style(&at(offs[k]), &at(end), style, want)?);
+                            k = e;
+                        }
+                    }
+                }
+                Ok(pages)
+            })
+            .map_err(|e| e.to_string())?;
+        self.edited(pages);
+        let len = self.session.text_of(&start).map(str::len).unwrap_or(0);
+        self.caret = Some(Pos::new(pos.story, pos.path.clone(), len));
+        self.anchor = self.caret.clone();
+        let in_order = order.windows(2).all(|w| w[0] < w[1]);
+        let count = |m: &str, c: char| m.chars().filter(|&x| x == c).count();
+        Ok(if claude_marks != marks {
+            let (o, t) = (count(&marks, 'o'), count(&marks, 't'));
+            let (co, ct) = (count(&claude_marks, 'o'), count(&claude_marks, 't'));
+            Some(format!(
+                "Inserted, but check it: this paragraph has {o} footnote mark(s), picture(s) or field(s) and {t} tab(s), and Claude's translation marks {co} and {ct}; they keep their order, so check where they ended up."
+            ))
+        } else if links_off {
+            Some("Inserted, but check the links: Claude's translation marks its link text ([…]) differently from this paragraph's links.".to_owned())
+        } else if !in_order {
+            Some("Inserted. Claude's translation puts the marks in another order; they keep the original's order.".to_owned())
+        } else {
+            None
+        })
+    }
+
     /// The original text of the paragraph at the caret.
     pub fn original_text(&self) -> Option<String> {
         let pid = self.pid_at(self.caret.as_ref()?)?;
@@ -1002,4 +1415,97 @@ impl Editor {
         }
         Some(word)
     }
+}
+
+/// Claude's text: the text, bold, italic, in a link.
+type Span = (String, bool, bool, bool);
+
+/// Plain text or a link's text, in stretches between what stays put.
+struct Region {
+    link: bool,
+    subs: Vec<(usize, usize)>,
+}
+
+/// Claude's text for a stretch with the original's spaces at its edges (the
+/// space before a footnote mark, after a field), and a stretch of only
+/// spaces kept as it was.
+fn edges_like(mut spans: Vec<Span>, original: &str) -> Vec<Span> {
+    let text: String = spans.iter().map(|x| x.0.as_str()).collect();
+    if text.trim().is_empty() {
+        return if original.trim().is_empty() && !original.is_empty() { vec![(original.to_owned(), false, false, false)] } else { vec![] };
+    }
+    if let Some(first) = spans.iter_mut().find(|x| !x.0.trim().is_empty()) {
+        first.0 = first.0.trim_start().to_owned();
+    }
+    if let Some(last) = spans.iter_mut().rev().find(|x| !x.0.trim().is_empty()) {
+        last.0 = last.0.trim_end().to_owned();
+    }
+    let first_text = spans.iter().position(|x| !x.0.trim().is_empty()).unwrap_or(0);
+    let last_text = spans.iter().rposition(|x| !x.0.trim().is_empty()).unwrap_or(0);
+    let mut out: Vec<Span> = spans.drain(first_text..=last_text).collect();
+    let lead = &original[..original.len() - original.trim_start().len()];
+    let trail = &original[original.trim_end().len()..];
+    // The edge spaces go with the text beside them (inside a link if it starts one).
+    if !lead.is_empty() {
+        let l = out.first().is_some_and(|x| x.3);
+        out.insert(0, (lead.to_owned(), false, false, l));
+    }
+    if !trail.is_empty() {
+        let l = out.last().is_some_and(|x| x.3);
+        out.push((trail.to_owned(), false, false, l));
+    }
+    out
+}
+
+/// Where to cut `text` among stretches that held `parts` of `original`:
+/// in proportion to their lengths, at a word boundary near there (exactly
+/// where they were when the text is the original's).
+fn cut_like(text: &str, original: &str, parts: &[String]) -> Vec<usize> {
+    let n = parts.len();
+    let total: usize = parts.iter().map(String::len).sum();
+    if n == 1 || total == 0 {
+        let mut cuts = vec![text.len(); n];
+        cuts[0] = text.len();
+        return cuts;
+    }
+    let mut cuts = Vec::with_capacity(n);
+    let mut cum = 0;
+    let mut prev = 0;
+    for (k, p) in parts.iter().enumerate() {
+        if k == n - 1 {
+            cuts.push(text.len());
+            break;
+        }
+        cum += p.len();
+        let mut cut = if text == original { cum } else { cum * text.len() / total };
+        if text != original {
+            let window = (text.len() / 8).max(3);
+            let boundaries: Vec<usize> = text.char_indices().filter(|(i, _)| *i > 0 && text[..*i].ends_with(char::is_whitespace)).map(|(i, _)| i).collect();
+            if let Some(&best) = boundaries.iter().filter(|&&b| b.abs_diff(cut) <= window).min_by_key(|&&b| b.abs_diff(cut)) {
+                cut = best;
+            }
+        }
+        while !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+        cut = cut.clamp(prev, text.len());
+        cuts.push(cut);
+        prev = cut;
+    }
+    cuts
+}
+
+/// The formatting of `spans` between byte offsets `a` and `b` of their text.
+fn slice_spans(spans: &[Span], a: usize, b: usize) -> Vec<(usize, bool, bool)> {
+    let mut out = vec![];
+    let mut at = 0;
+    for (t, bb, ii, _) in spans {
+        let end = at + t.len();
+        let (x, y) = (at.max(a), end.min(b));
+        if x < y {
+            out.push((y - x, *bb, *ii));
+        }
+        at = end;
+    }
+    out
 }

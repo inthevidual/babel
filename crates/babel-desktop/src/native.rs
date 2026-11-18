@@ -294,6 +294,52 @@ pub fn revert() -> Value {
     with(|s| { let v = s.editor.revert_paragraph(); s.answer(v) }, Value::Null)
 }
 
+// ── Claude's translation (a segment file) ─────────────────────────────
+
+/// Replaces the paragraph at the caret with Claude's translation of it.
+pub fn insert_claude() -> Value {
+    with(|s| { let v = s.editor.insert_claude(); s.answer(v) }, Value::Null)
+}
+
+/// Attaches the segment file at `path` to the open translation.
+pub fn attach_claude(path: &std::path::Path) -> Value {
+    with(
+        |s| {
+            let v = match std::fs::read_to_string(path) {
+                Ok(md) => s.editor.attach_segments(&md),
+                Err(e) => {
+                    let mut v = s.editor.state();
+                    v["error"] = json!(format!("Could not read {}: {e}", path.display()));
+                    v
+                }
+            };
+            s.answer(v)
+        },
+        Value::Null,
+    )
+}
+
+pub fn remove_claude() -> Value {
+    with(|s| { let v = s.editor.remove_segments(); s.answer(v) }, Value::Null)
+}
+
+/// Writes the open translation's original as a segment file for Claude to translate.
+pub fn export_segments(path: &std::path::Path) -> anyhow::Result<()> {
+    let md = with(
+        |s| {
+            let a = app();
+            let meta = a.db(|st| st.get_project(&a.user, &s.project)).unwrap_or(Value::Null);
+            let name = meta["fileName"].as_str().or(meta["name"].as_str()).unwrap_or("document.docx").to_owned();
+            let lang = meta["targetLang"].as_str().unwrap_or("").to_owned();
+            Some(s.editor.export_segments(&name, &lang))
+        },
+        None,
+    )
+    .ok_or_else(|| anyhow::anyhow!("No translation is open."))?;
+    std::fs::write(path, md)?;
+    Ok(())
+}
+
 pub fn paste_link(clipboard: &str) -> Value {
     with(|s| { let v = s.editor.paste_link(clipboard); s.answer(v) }, Value::Null)
 }

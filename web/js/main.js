@@ -427,6 +427,8 @@ async function openWasm(session, stored) {
           P.project.confirmed = meta.confirmed; P.confirmed = new Set(meta.confirmed);
           P.project.ignored = meta.ignored; P.ignored = new Set(meta.ignored);
           P.project.stats = meta.stats;
+          if (meta.claudeSegments) P.project.claudeSegments = meta.claudeSegments;
+          else delete P.project.claudeSegments;
           P.changedSinceSnapshot = true;
           setSaveState('pending');
           scheduleSave();

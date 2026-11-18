@@ -371,7 +371,7 @@ impl Link {
 }
 
 /// `parseHyperlinkInstr`: the link of a HYPERLINK field's instruction.
-pub(crate) fn parse_hyperlink_instr(instr: &str) -> Option<Link> {
+pub fn parse_hyperlink_instr(instr: &str) -> Option<Link> {
     let s = instr.trim_start();
     if !s.get(..9).is_some_and(|h| h.eq_ignore_ascii_case("HYPERLINK")) {
         return None;

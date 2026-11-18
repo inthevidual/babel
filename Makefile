@@ -4,7 +4,7 @@
 PREFIX ?= $(HOME)/.local
 BIN = target/release
 
-.PHONY: all desktop server wasm install install-server test uninstall
+.PHONY: all desktop server wasm install install-server test uninstall skill
 
 all: desktop server
 
@@ -34,3 +34,10 @@ uninstall:
 
 test:
 	cargo test --workspace
+
+# The babel-translate skill as a zip to upload to Claude (Settings › Capabilities › Skills).
+skill:
+	mkdir -p target
+	rm -f target/babel-translate.zip
+	cd skills && zip -qr ../target/babel-translate.zip babel-translate -x '*/__pycache__/*'
+	@echo target/babel-translate.zip

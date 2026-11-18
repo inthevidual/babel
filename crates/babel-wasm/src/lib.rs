@@ -180,6 +180,30 @@ impl WasmEditor {
         self.editor.paste_link(clipboard).to_string()
     }
 
+    // ── Claude's translation (a segment file) ─────────────────────────────
+
+    /// Replaces the paragraph at the caret with Claude's translation of it.
+    #[wasm_bindgen(js_name = insertClaude)]
+    pub fn insert_claude(&mut self) -> String {
+        self.editor.insert_claude().to_string()
+    }
+
+    #[wasm_bindgen(js_name = attachSegments)]
+    pub fn attach_segments(&mut self, md: &str) -> String {
+        self.editor.attach_segments(md).to_string()
+    }
+
+    #[wasm_bindgen(js_name = removeSegments)]
+    pub fn remove_segments(&mut self) -> String {
+        self.editor.remove_segments().to_string()
+    }
+
+    /// The original as a segment file for Claude to translate.
+    #[wasm_bindgen(js_name = exportSegments)]
+    pub fn export_segments(&self, document: &str, target_lang: &str) -> String {
+        self.editor.export_segments(document, target_lang)
+    }
+
     // ── Proofing ──────────────────────────────────────────────────────────
 
     /// The next LanguageTool request as form fields ({field: value}), or "null".

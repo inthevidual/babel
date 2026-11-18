@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
+import QtQuick.Dialogs
+import QtCore
 import org.kde.kirigami as Kirigami
 import se.cptjanst.babel
 
@@ -26,6 +28,8 @@ Kirigami.Page {
     property var sourceSelection: []
     property var styles: ({ b: false, i: false, u: false })
     property var paragraph: null
+    // Claude's translation attached: {matched, total}, or null.
+    property var claude: null
     property var stats: null
     property bool canUndo: false
     property bool canRedo: false
@@ -140,6 +144,18 @@ Kirigami.Page {
         return third;
     }
 
+    // For the UI tests: the context menu's Insert Claude's Translation item.
+    function testMenu() {
+        return { open: contextMenu.opened, visible: insertClaudeItem.visible, enabled: insertClaudeItem.enabled };
+    }
+
+    function testTriggerInsert() {
+        if (contextMenu.opened && insertClaudeItem.visible && insertClaudeItem.enabled) {
+            insertClaudeItem.triggered();
+            contextMenu.close();
+        }
+    }
+
     // How far the translation is scrolled (for the UI tests).
     function targetY() {
         return right.contentY;
@@ -177,6 +193,8 @@ Kirigami.Page {
         if (r.styles)
             styles = r.styles;
         paragraph = r.paragraph || null;
+        if (r.claude !== undefined)
+            claude = r.claude;
         if (r.stats)
             stats = r.stats;
         canUndo = !!r.canUndo;
@@ -369,6 +387,30 @@ Kirigami.Page {
             text: "Settings…"
             displayHint: Kirigami.DisplayHint.AlwaysHide
             onTriggered: page.settingsRequested()
+        },
+        Kirigami.Action {
+            icon.name: "document-import"
+            text: page.claude ? "Replace Claude's Translation…" : "Attach Claude's Translation…"
+            tooltip: "A segment file translated by Claude (Markdown), to insert paragraph by paragraph"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: attachClaudeDialog.open()
+        },
+        Kirigami.Action {
+            icon.name: "document-save-as"
+            text: "Export Segments for Claude…"
+            tooltip: "The original as a segment file, for Claude to translate"
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: {
+                exportSegmentsDialog.selectedFile = "file://" + StandardPaths.writableLocation(StandardPaths.DocumentsLocation).toString().replace(/^file:\/\//, "") + "/" + Backend.segmentsName(page.projectId);
+                exportSegmentsDialog.open();
+            }
+        },
+        Kirigami.Action {
+            icon.name: "edit-delete-remove"
+            text: "Remove Claude's Translation"
+            visible: !!page.claude
+            displayHint: Kirigami.DisplayHint.AlwaysHide
+            onTriggered: page.answer(Backend.nativeRemoveClaude(), false)
         },
         Kirigami.Action {
             icon.name: "help-contents"
@@ -738,6 +780,24 @@ Kirigami.Page {
         background: Rectangle { color: Kirigami.Theme.backgroundColor; opacity: 0.9 }
     }
 
+    FileDialog {
+        id: attachClaudeDialog
+        title: "Attach Claude's translation"
+        nameFilters: ["Segment files (*.md *.markdown *.txt)", "All files (*)"]
+        onAccepted: page.answer(Backend.nativeAttachClaude(selectedFile), false)
+    }
+
+    FileDialog {
+        id: exportSegmentsDialog
+        title: "Export segments for Claude"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Markdown (*.md)"]
+        onAccepted: {
+            const err = Backend.nativeExportSegments(selectedFile);
+            applicationWindow().showPassiveNotification(err ? err : "Saved. Give the file to Claude with the Babel translate skill, then attach the translation it returns.", err ? "short" : "long");
+        }
+    }
+
     QQC2.Menu {
         id: contextMenu
         QQC2.MenuItem { text: "Cut"; icon.name: "edit-cut"; enabled: page.selection.length > 0; onTriggered: page.copy(true) }
@@ -753,6 +813,15 @@ Kirigami.Page {
         }
         QQC2.MenuItem { text: "Revert Paragraph to the Original"; icon.name: "edit-reset"; enabled: page.paragraph !== null && page.paragraph.edited; onTriggered: page.answer(Backend.nativeRevert(), false) }
         QQC2.MenuItem { text: "Copy the Original Text"; icon.name: "edit-copy"; enabled: page.paragraph !== null; onTriggered: Backend.nativeCopyOriginal() }
+        QQC2.MenuItem {
+            id: insertClaudeItem
+            text: "Insert Claude's Translation"
+            icon.name: "document-import"
+            visible: !!page.claude
+            height: visible ? implicitHeight : 0
+            enabled: !!(page.paragraph && page.paragraph.claude)
+            onTriggered: page.answer(Backend.nativeInsertClaude(), false)
+        }
         QQC2.MenuSeparator {}
         QQC2.MenuItem { text: "Undo"; icon.name: "edit-undo"; enabled: page.canUndo; onTriggered: page.key(0x5A, "", 0x04000000) }
         QQC2.MenuItem { text: "Redo"; icon.name: "edit-redo"; enabled: page.canRedo; onTriggered: page.key(0x59, "", 0x04000000) }

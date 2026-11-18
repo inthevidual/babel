@@ -199,6 +199,42 @@ check(stylesXml.includes('w:val="sv-SE"'), 'and is marked Swedish');
   check(para.length > word.length && para.includes(' '), 'triple-click selects the paragraph: ' + para.slice(0, 40));
 }
 
+// Claude's translation: attach a segment file, insert from the menu, export, kept after reload.
+{
+  const menuClick = async (label) => { await page.locator('.menu-item, [role=menuitem]', { hasText: label }).first().click(); };
+  let p = await where('document:2', 3);
+  await page.mouse.click(p.x, p.y, { button: 'right' });
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), menuClick('Attach Claude’s translation')]);
+  await chooser.setFiles(path.resolve(path.dirname(fixture), '../ui/claude-sample.md'));
+  await page.waitForFunction(() => !!__babel.P.view.state.claude);
+  const attached = await page.evaluate(() => __babel.P.view.state.claude);
+  check(attached.matched === 2 && attached.total === 46, `the segment file is attached: ${JSON.stringify(attached)}`);
+  p = await where('document:2', 3);
+  await page.mouse.click(p.x, p.y);
+  await page.mouse.click(p.x, p.y, { button: 'right' });
+  const item = page.locator('.menu-item, [role=menuitem]', { hasText: 'Insert Claude’s translation' }).first();
+  check(await item.isVisible(), 'the menu offers Insert Claude’s translation');
+  await item.click();
+  await page.waitForTimeout(200);
+  const xml = await paraXml('document:2');
+  check(/<w:b\/>[^]*?>konfidentiell</.test(xml) || /konfidentiell/.test(xml) && xml.includes('<w:b/>'), 'Claude’s translation is in the paragraph, with its bold');
+  check(xml.includes('>Denna rapport är <') || xml.includes('Denna rapport är'), 'its text replaced the paragraph');
+  // Export: a segment file of the original.
+  p = await where('document:2', 3);
+  await page.mouse.click(p.x, p.y, { button: 'right' });
+  const [seg] = await Promise.all([page.waitForEvent('download'), menuClick('Export segments for Claude')]);
+  const segFile = path.join(OUT, 'wasm-segments.md');
+  await seg.saveAs(segFile);
+  const segText = fs.readFileSync(segFile, 'utf8');
+  check(segText.startsWith('---\nbabel-segments: 1') && segText.includes('## 3 · document:2') && segText.includes('{1}'), 'the exported segment file has the original’s segments');
+  // Kept with the translation.
+  await page.evaluate(() => __babel.P.view.flush());
+  await page.waitForTimeout(1500);
+  await page.reload();
+  await page.waitForFunction(() => document.querySelector('#loading').hidden && window.__babel?.P?.view?.state, null, { timeout: 60000 });
+  check(!!(await page.evaluate(() => __babel.P.view.state.claude)), 'the attached file is still there after a reload');
+}
+
 check(!errors.length, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
 await browser.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
