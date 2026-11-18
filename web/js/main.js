@@ -444,6 +444,8 @@ async function openWasm(session, stored) {
   }
   if (P !== session) { view.close(); return true; }
   P.view = view;
+  $('#btnView').hidden = false;
+  if (readTextView()) await setTextView(true);
   applyZoom(settings.zoom);
   $('#syncScroll').checked = settings.sync;
   $('#loading').hidden = true;
@@ -528,6 +530,7 @@ function indexXml() {
 async function closeProject() {
   if (!P) return;
   P.view?.close();
+  $('#btnView').hidden = true;
   flushAll();
   await save();
   P.lock?.release();
@@ -1648,6 +1651,20 @@ function saveBlob(blob, name) {
 // ── Versions ───────────────────────────────────────────────────────────────
 
 $('#btnVersions').onclick = () => { if (P) openVersions(); };
+
+// The text view (segments side by side) or the pages, remembered in this browser.
+const VIEW_KEY = 'babel.textView';
+function readTextView() {
+  try { return localStorage.getItem(VIEW_KEY) === '1'; } catch { return false; }
+}
+async function setTextView(on) {
+  if (!P?.view?.setTextMode) return;
+  try { localStorage.setItem(VIEW_KEY, on ? '1' : '0'); } catch { /* a convenience only */ }
+  await P.view.setTextMode(on, $('#segView'));
+  $('#btnView').textContent = on ? 'Page view' : 'Text view';
+  $('#btnView').title = on ? 'The pages as they will print' : 'The segments side by side, as text';
+}
+$('#btnView').onclick = () => setTextView(!P?.view?.textMode);
 $('#versionSave').onclick = async () => {
   const name = $('#versionName').value.trim() || 'saved by you';
   $('#versionName').value = '';

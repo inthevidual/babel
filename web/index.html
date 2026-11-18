@@ -35,7 +35,8 @@
       <button id="zoomVal" title="Fit to width">100 %</button>
       <button id="zoomIn" title="Zoom in">+</button>
     </div>
-    <label class="toggle" title="Scroll both documents together"><input type="checkbox" id="syncScroll" checked> Sync</label>
+    <label class="toggle" id="syncToggle" title="Scroll both documents together"><input type="checkbox" id="syncScroll" checked> Sync</label>
+    <button class="ghost" id="btnView" title="The segments side by side, as text" hidden>Text view</button>
     <button class="ghost" id="btnVersions">Versions</button>
     <button class="ghost" id="btnSettings">Settings</button>
     <button class="ghost icon" id="btnHelp" title="Keyboard shortcuts and help">?</button>
@@ -98,6 +99,7 @@
     <div class="scroll" id="tgtScroll"><div class="sizer"><div class="scaler"><div class="doc" id="tgtDoc"></div></div></div></div>
     <footer class="status" id="tgtStatus"></footer>
   </section>
+  <section class="segview" id="segView" aria-label="Segments" hidden></section>
   <div class="loading" id="loading"><div class="spinner"></div><span id="loadingText">Opening…</span></div>
 </main>
 

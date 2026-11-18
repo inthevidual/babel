@@ -220,6 +220,10 @@ Kirigami.ApplicationWindow {
                 claude: editor.claude,
                 paraClaude: editor.paragraph ? !!editor.paragraph.claude : null,
                 menu: editor.testMenu(),
+                textView: editor.textView,
+                activePid: editor.testSegments().activePid,
+                rowText: editor.testSegments().activeText(),
+                done: editor.stats ? editor.stats.done : null,
             });
         }
         onTriggered: {
@@ -255,6 +259,10 @@ Kirigami.ApplicationWindow {
                 Backend.testMouse(4, s.rightClick[0], s.rightClick[1], 0);
                 Backend.testMouse(5, s.rightClick[0], s.rightClick[1], 0);
             }
+            if (s.textView !== undefined)
+                editor.setTextView(s.textView);
+            if (s.selectRow)
+                editor.testSegments().focusRow(s.selectRow[0], s.selectRow[1], s.selectRow.length > 2 ? s.selectRow[2] : s.selectRow[1]);
             if (s.attach)
                 editor.answer(Backend.nativeAttachClaude("file://" + s.attach), false);
             if (s.menuInsert)
@@ -274,6 +282,9 @@ Kirigami.ApplicationWindow {
                         : k === "charsBelow" ? st.chars < want
                         : k === "scrolled" ? st.targetY !== want
                         : k === "selectedEquals" ? st.selected === want
+                        : k === "rowStarts" ? st.rowText.startsWith(want)
+                        : k === "rowHas" ? st.rowText.includes(want)
+                        : k === "rowHtmlHas" ? editor.testSegments().rowHtml(want[0]).includes(want[1]) === want[2]
                         : k === "menuInsert" ? JSON.stringify(st.menu) === JSON.stringify(want)
                         : k === "claude" ? JSON.stringify(st.claude) === JSON.stringify(want)
                         : st[k] === want;

@@ -70,3 +70,18 @@ fn matches_the_javascript_write_back() {
         );
     }
 }
+
+/// The one-pass index finds every paragraph just where `find_paragraph` does.
+#[test]
+fn paragraph_ranges_agree_with_find_paragraph() {
+    let parts: std::collections::BTreeMap<String, String> = serde_json::from_str(include_str!("../../babel-pages/tests/sample-parts.json")).unwrap();
+    let mut n = 0;
+    for xml in parts.values() {
+        let all = babel_docx::para::paragraph_ranges(xml);
+        for (pid, r) in &all {
+            assert_eq!(Some(r.clone()), babel_docx::para::find_paragraph(xml, pid), "{pid}");
+            n += 1;
+        }
+    }
+    assert!(n > 40, "{n}");
+}

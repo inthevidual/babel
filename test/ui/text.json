@@ -1,0 +1,259 @@
+[
+{
+"wait": 1500
+},
+{
+"name": "the text view",
+"textView": true,
+"wait": 1500
+},
+{
+"name": "the text view",
+"expect": {
+"textView": true,
+"activePid": "document:0"
+}
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/text-view.png"
+},
+{
+"name": "typing in a row",
+"selectRow": [
+"document:2",
+0
+],
+"wait": 300
+},
+{
+"key": 88,
+"text": "X",
+"wait": 200
+},
+{
+"name": "typing in a row",
+"expect": {
+"rowStarts": "XThis report",
+"chars": 5535,
+"para": "document:2"
+}
+},
+{
+"name": "backspace",
+"key": 16777219,
+"wait": 200
+},
+{
+"name": "backspace",
+"expect": {
+"rowStarts": "This report",
+"chars": 5534
+}
+},
+{
+"name": "typing a word",
+"selectRow": [
+"document:2",
+5
+],
+"wait": 200
+},
+{
+"key": 78,
+"text": "n"
+},
+{
+"key": 69,
+"text": "e"
+},
+{
+"key": 87,
+"text": "w"
+},
+{
+"key": 32,
+"text": " ",
+"wait": 300
+},
+{
+"name": "typing a word",
+"expect": {
+"rowStarts": "This new report",
+"chars": 5538
+}
+},
+{
+"name": "bold on a selection",
+"selectRow": [
+"document:2",
+0,
+4
+],
+"wait": 300
+},
+{
+"name": "bold on a selection",
+"key": 66,
+"mods": 67108864,
+"wait": 400
+},
+{
+"name": "bold on a selection",
+"expect": {
+"rowHtmlHas": [
+"document:2",
+"<b>This</b>",
+true
+]
+}
+},
+{
+"name": "undo takes it back",
+"key": 90,
+"mods": 67108864,
+"wait": 400
+},
+{
+"name": "undo takes it back",
+"expect": {
+"rowHtmlHas": [
+"document:2",
+"<b>This</b>",
+false
+]
+}
+},
+{
+"name": "undo the typing too",
+"key": 90,
+"mods": 67108864,
+"wait": 400
+},
+{
+"name": "undo the typing too",
+"expect": {
+"chars": 5534
+}
+},
+{
+"name": "enter goes to the next segment",
+"selectRow": [
+"document:2",
+3
+],
+"wait": 200
+},
+{
+"name": "enter goes to the next segment",
+"key": 16777220,
+"wait": 400
+},
+{
+"name": "enter goes to the next segment",
+"expect": {
+"activePid": "document:3"
+}
+},
+{
+"name": "ctrl+enter marks done and goes on",
+"key": 16777220,
+"mods": 67108864,
+"wait": 500
+},
+{
+"name": "ctrl+enter marks done and goes on",
+"expect": {
+"activePid": "document:4",
+"done": 1
+}
+},
+{
+"name": "ctrl+enter in a table goes to the next row, not down the page",
+"selectRow": [
+"document:19",
+0
+],
+"wait": 300
+},
+{
+"name": "ctrl+enter in a table goes to the next row, not down the page",
+"key": 16777220,
+"mods": 67108864,
+"wait": 500
+},
+{
+"name": "ctrl+enter in a table goes to the next row, not down the page",
+"expect": {
+"activePid": "document:20",
+"done": 2
+}
+},
+{
+"name": "a chip can't be deleted",
+"selectRow": [
+"document:10",
+33,
+34
+],
+"wait": 300
+},
+{
+"name": "a chip can't be deleted",
+"key": 16777223,
+"wait": 500
+},
+{
+"name": "a chip can't be deleted",
+"expect": {
+"rowHas": "sentence.① And",
+"chars": 5534
+}
+},
+{
+"name": "Claude with Ctrl+1",
+"attach": "/home/jesper/claude/babel/test/ui/claude-sample.md",
+"wait": 800
+},
+{
+"name": "Claude with Ctrl+1",
+"selectRow": [
+"document:2",
+0
+],
+"wait": 300
+},
+{
+"name": "Claude with Ctrl+1",
+"key": 49,
+"text": "1",
+"mods": 67108864,
+"wait": 600
+},
+{
+"name": "Claude with Ctrl+1",
+"expect": {
+"rowStarts": "Denna rapport är konfidentiell"
+}
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/text-view-claude.png"
+},
+{
+"name": "back to the pages",
+"textView": false,
+"wait": 1500
+},
+{
+"name": "back to the pages",
+"expect": {
+"textView": false,
+"para": "document:2"
+}
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/text-view-back.png"
+},
+{
+"log": "end"
+}
+]

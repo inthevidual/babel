@@ -11,11 +11,11 @@
 import init, { WasmEditor, addFont } from '../wasm/babel_wasm.js';
 import { ContextMenu } from './menu.js';
 
-const QT = {
+export const QT = {
   ArrowLeft: 0x01000012, ArrowRight: 0x01000014, ArrowUp: 0x01000013, ArrowDown: 0x01000015,
   Home: 0x01000010, End: 0x01000011, Backspace: 0x01000003, Delete: 0x01000007, Enter: 0x01000004,
 };
-const SHIFT = 0x02000000, CTRL = 0x04000000;
+export const SHIFT = 0x02000000, CTRL = 0x04000000;
 const PX = 96 / 72; // CSS pixels per point at 100 %
 
 let engine = null;
@@ -177,7 +177,8 @@ export class WasmView {
   answer(json, { fromClick = false } = {}) {
     if (!json || json === 'null') return;
     const r = JSON.parse(json);
-    const changed = this.redraw();
+    // In the text view the pages wait until they are shown again.
+    const changed = this.textMode ? false : this.redraw();
     if (r.error) this.hooks.toast(r.error, 'warn');
     if (r.message) this.hooks.toast(r.message);
     this.applyState(r);
@@ -191,6 +192,25 @@ export class WasmView {
     }
     this.flushJournal();
     if (fromClick && r.issue) this.showIssue(r.issue); else this.hideIssue();
+    if (this.textMode) this.segments?.afterAnswer(r);
+  }
+
+  // The text view (rows of segments) or the pages.
+  async setTextMode(on, host) {
+    if (on === !!this.textMode) return;
+    this.textMode = on;
+    if (on) {
+      if (!this.segments) {
+        const { SegmentsView } = await import('./segments-view.js');
+        this.segments = new SegmentsView(this, host);
+      }
+      this.segments.show();
+    } else {
+      this.segments?.hide();
+      // The pages as the edits since have left them.
+      this.answer(this.editor.state());
+      this.focus();
+    }
   }
 
   applyState(json) {
@@ -579,6 +599,7 @@ export class WasmView {
     this.io?.disconnect();
     this.menu?.close();
     this.menu?.el.remove();
+    this.segments?.hide();
     this.input?.remove();
     this.preedit?.remove();
     this.hideIssue();

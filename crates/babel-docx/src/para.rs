@@ -57,6 +57,48 @@ pub fn find_paragraph(part: &str, pid: &str) -> Option<Range<usize>> {
     }
 }
 
+/// Every paragraph of a part with a `data-bp` id and where it is, in one pass
+/// (as [`find_paragraph`] finds one).
+pub fn paragraph_ranges(part: &str) -> std::collections::HashMap<String, Range<usize>> {
+    let mut out = std::collections::HashMap::new();
+    let mut r = Reader::from_str(part);
+    // Open paragraphs: where each starts and its id.
+    let mut open: Vec<(usize, Option<String>)> = vec![];
+    loop {
+        let start = r.buffer_position() as usize;
+        let Ok(ev) = r.read_event() else { break };
+        let end = r.buffer_position() as usize;
+        match &ev {
+            Event::Eof => break,
+            Event::Start(e) | Event::Empty(e) => {
+                let name = e.name();
+                if !name.into_inner().ends_with(":p") && name.into_inner() != "p" {
+                    continue;
+                }
+                let id = e.attributes().flatten().find(|a| a.key.into_inner() == "data-bp").map(|a| a.value.into_owned());
+                if matches!(ev, Event::Empty(_)) {
+                    if let Some(id) = id {
+                        out.entry(id).or_insert(start..end);
+                    }
+                } else {
+                    open.push((start, id));
+                }
+            }
+            Event::End(e) => {
+                let name = e.name();
+                if !name.into_inner().ends_with(":p") && name.into_inner() != "p" {
+                    continue;
+                }
+                if let Some((s, Some(id))) = open.pop() {
+                    out.entry(id).or_insert(s..end);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// What a run of a paragraph is to the editor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunKind {

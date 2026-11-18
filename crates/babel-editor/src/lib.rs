@@ -8,6 +8,7 @@
 //! Answers are JSON, the same shape for both: see [`Editor::state`].
 
 pub mod proof;
+pub mod rows;
 pub mod segments;
 
 use std::collections::{BTreeSet, HashMap};
@@ -177,6 +178,11 @@ pub struct Editor {
     styles_xml: Option<String>,
     /// Claude's translation, segment by segment, when one is attached.
     claude: Option<Claude>,
+    /// The text view: rows changed since [`Editor::take_row_changes`], all of
+    /// them, and each row's number.
+    row_changes: BTreeSet<String>,
+    rows_all: bool,
+    row_n: HashMap<String, usize>,
 }
 
 /// A segment file attached to the translation (see [`segments`]).
@@ -276,6 +282,9 @@ impl Editor {
             copied_candidate: None,
             styles_xml,
             claude: None,
+            row_changes: BTreeSet::new(),
+            rows_all: false,
+            row_n: HashMap::new(),
         };
         if let Some(md) = project["claudeSegments"].as_str() {
             editor.claude = editor.index_segments(md).ok();
@@ -309,6 +318,12 @@ impl Editor {
     }
 
     /// The translation's pages to draw again (all, if their number changed).
+    /// Whether there is anything to draw again (an edit since the last
+    /// [`Editor::take_redraw`]).
+    pub fn has_pending_redraw(&self) -> bool {
+        self.redraw_all || !self.redraw.is_empty()
+    }
+
     /// The pages to draw again; all of them when there are more or fewer
     /// than before (the view's list of pages changes), and never one that is
     /// gone (an edit may add a page and take it away again).
@@ -363,6 +378,7 @@ impl Editor {
     /// formatting at the caret, undo state, the issue under the caret, the
     /// paragraph's status, statistics and marks.
     pub fn state(&mut self) -> Value {
+        let text_caret = self.text_caret();
         let caret = match self.caret.clone() {
             Some(pos) => {
                 let editable = self.session.editable(&pos);
@@ -409,6 +425,7 @@ impl Editor {
             "canRedo": self.session.can_redo(),
             "issue": self.issue_at_caret(),
             "paragraph": para,
+            "textCaret": text_caret,
             "claude": self.claude.as_ref().map(|c| json!({ "matched": c.by_pid.len(), "total": c.total })),
             "stats": self.stats(),
         })
@@ -512,6 +529,7 @@ impl Editor {
     fn edited(&mut self, pages: Vec<usize>) {
         self.redraw.extend(pages);
         for pid in self.session.take_edited() {
+            self.row_changes.insert(pid.clone());
             self.journal.insert(pid.clone());
             self.proof.issues.remove(&pid);
             self.proof.queue.insert(pid.clone());
@@ -581,6 +599,7 @@ impl Editor {
         let mut target = self.source_parts.clone();
         target.extend(translated);
         self.session.replace_parts(target).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        self.rows_all = true;
         self.anchor = None;
         if let Some(c) = &self.caret {
             if self.session.text_of(c).is_none_or(|t| c.off > t.len()) {
@@ -804,6 +823,7 @@ impl Editor {
                 // Mark as done (or not) and go on to the next paragraph, as Ctrl+Enter does on the web.
                 match self.pid_at(&pos) {
                     Some(pid) => {
+                        self.row_changes.insert(pid.clone());
                         let done = !self.confirmed.remove(&pid);
                         if done {
                             self.confirmed.insert(pid);
@@ -975,6 +995,7 @@ impl Editor {
                 msg = Some(format!("Claude's translation attached: {} of {} paragraphs have one. Right-click a paragraph and choose Insert Claude's Translation.", c.by_pid.len(), c.total));
                 self.claude = Some(c);
                 self.meta_dirty = true;
+                self.rows_all = true;
                 None
             }
             Err(e) => Some(e),
@@ -993,6 +1014,7 @@ impl Editor {
     pub fn remove_segments(&mut self) -> Value {
         if self.claude.take().is_some() {
             self.meta_dirty = true;
+            self.rows_all = true;
         }
         self.state()
     }
@@ -1032,33 +1054,8 @@ impl Editor {
 
         // The runs that make the objects the segment file numbers {1}, {2}…,
         // and those that are a link's text.
-        let numbered = {
-            let path = self.meta.get(&pid).map(|m| m.path.clone()).unwrap_or_default();
-            let xml = self.session.parts.get(&path).ok_or("The paragraph is missing.")?;
-            let range = find_paragraph(xml, &pid).ok_or("The paragraph is missing.")?;
-            let t = Tree::parse(&xml[range]).map_err(|e| e.to_string())?;
-            let (items, links) = segments::walk_with_links(&t, t.root);
-            let numbered: std::collections::HashSet<String> = items
-                .iter()
-                .flat_map(|it| match it {
-                    segments::Item::Obj(rids) => rids.clone(),
-                    _ => vec![],
-                })
-                .collect();
-            let count = items.iter().filter(|it| matches!(it, segments::Item::Obj(_))).count();
-            (numbered, links, count)
-        };
-        let (numbered, links, count) = (numbered.0, numbered.1, numbered.2);
-        // Which pieces are the numbered objects: by their runs; or, when that
-        // misses some (a page number the layout draws itself has no run), all
-        // of them in order, if there are just as many.
-        let by_run: Vec<bool> = pieces.iter().map(|p| p.is_object() && matches!(p, Piece::Fixed { rid: Some(r), .. } if numbered.contains(r))).collect();
-        let all_objects = pieces.iter().filter(|p| p.is_object()).count();
-        let numbered_piece: Vec<bool> = if by_run.iter().filter(|&&x| x).count() != count && all_objects == count {
-            pieces.iter().map(|p| p.is_object()).collect()
-        } else {
-            by_run
-        };
+        let (items, links) = self.target_walk(&pid)?;
+        let numbered_piece = numbered_pieces(&pieces, &items);
 
         // The paragraph cut at its numbered objects and tabs (which stay put)
         // into stretches, each a row of regions: plain text, or a link's text.
@@ -1290,6 +1287,16 @@ impl Editor {
         })
     }
 
+    /// The translation's paragraph `pid` walked (as a segment file sees it),
+    /// and the runs that are a link's text.
+    pub(crate) fn target_walk(&self, pid: &str) -> Result<(Vec<segments::Item>, std::collections::HashSet<String>), String> {
+        let path = self.meta.get(pid).map(|m| m.path.clone()).unwrap_or_default();
+        let xml = self.session.parts.get(&path).ok_or("The paragraph is missing.")?;
+        let range = find_paragraph(xml, pid).ok_or("The paragraph is missing.")?;
+        let t = Tree::parse(&xml[range]).map_err(|e| e.to_string())?;
+        Ok(segments::walk_with_links(&t, t.root))
+    }
+
     /// The original text of the paragraph at the caret.
     pub fn original_text(&self) -> Option<String> {
         let pid = self.pid_at(self.caret.as_ref()?)?;
@@ -1422,6 +1429,28 @@ impl Editor {
             list.retain(|x| !(x.kind == "spelling" && x.word == word));
         }
         Some(word)
+    }
+}
+
+/// Which of a paragraph's pieces are the objects a segment file numbers
+/// {1}, {2}… (from its walk): by their runs; or, when that misses some (a page
+/// number the layout draws itself has no run), all of them in order, if
+/// there are just as many.
+pub(crate) fn numbered_pieces(pieces: &[Piece], items: &[segments::Item]) -> Vec<bool> {
+    let numbered: std::collections::HashSet<&String> = items
+        .iter()
+        .flat_map(|it| match it {
+            segments::Item::Obj(rids) => rids.iter().collect(),
+            _ => vec![],
+        })
+        .collect();
+    let count = items.iter().filter(|it| matches!(it, segments::Item::Obj(_))).count();
+    let by_run: Vec<bool> = pieces.iter().map(|p| p.is_object() && matches!(p, Piece::Fixed { rid: Some(r), .. } if numbered.contains(r))).collect();
+    let all_objects = pieces.iter().filter(|p| p.is_object()).count();
+    if by_run.iter().filter(|&&x| x).count() != count && all_objects == count {
+        pieces.iter().map(|p| p.is_object()).collect()
+    } else {
+        by_run
     }
 }
 

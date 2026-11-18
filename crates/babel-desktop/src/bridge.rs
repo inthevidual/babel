@@ -214,6 +214,38 @@ pub mod qobject {
         #[cxx_name = "nativeRevert"]
         fn native_revert(self: Pin<&mut Backend>) -> QString;
 
+        // ── The text view ───────────────────────────────────────────────
+
+        /// Every row (segment) of the text view.
+        #[qinvokable]
+        #[cxx_name = "nativeRows"]
+        fn native_rows(self: Pin<&mut Backend>) -> QString;
+
+        /// The rows changed since the last call: {all, rows}.
+        #[qinvokable]
+        #[cxx_name = "nativeRowChanges"]
+        fn native_row_changes(self: Pin<&mut Backend>) -> QString;
+
+        /// The selection in a row (UTF-16 positions of its text): anchor to caret.
+        #[qinvokable]
+        #[cxx_name = "nativeTextSelect"]
+        fn native_text_select(self: Pin<&mut Backend>, pid: &QString, anchor: i32, caret: i32) -> QString;
+
+        /// Typing in a row: its text's from..to becomes `text`.
+        #[qinvokable]
+        #[cxx_name = "nativeTextEdit"]
+        fn native_text_edit(self: Pin<&mut Backend>, pid: &QString, from: i32, to: i32, text: &QString) -> QString;
+
+        /// Claude's translation of a row as spans, or null.
+        #[qinvokable]
+        #[cxx_name = "nativeClaudeSpans"]
+        fn native_claude_spans(self: Pin<&mut Backend>, pid: &QString) -> QString;
+
+        /// The pages on screen or not (the text view); shown again: the answer with them drawn.
+        #[qinvokable]
+        #[cxx_name = "nativeShowPages"]
+        fn native_show_pages(self: Pin<&mut Backend>, on: bool) -> QString;
+
         /// Replaces the paragraph at the caret with Claude's translation of it.
         #[qinvokable]
         #[cxx_name = "nativeInsertClaude"]
@@ -627,6 +659,30 @@ impl qobject::Backend {
 
     fn native_revert(self: Pin<&mut Self>) -> QString {
         s(&native::revert())
+    }
+
+    fn native_rows(self: Pin<&mut Self>) -> QString {
+        s(&native::rows())
+    }
+
+    fn native_row_changes(self: Pin<&mut Self>) -> QString {
+        s(&native::row_changes())
+    }
+
+    fn native_text_select(self: Pin<&mut Self>, pid: &QString, anchor: i32, caret: i32) -> QString {
+        s(&native::text_select(&pid.to_string(), anchor.max(0) as usize, caret.max(0) as usize))
+    }
+
+    fn native_text_edit(self: Pin<&mut Self>, pid: &QString, from: i32, to: i32, text: &QString) -> QString {
+        s(&native::text_edit(&pid.to_string(), from.max(0) as usize, to.max(0) as usize, &text.to_string()))
+    }
+
+    fn native_claude_spans(self: Pin<&mut Self>, pid: &QString) -> QString {
+        s(&native::claude_spans(&pid.to_string()))
+    }
+
+    fn native_show_pages(self: Pin<&mut Self>, on: bool) -> QString {
+        s(&native::show_pages(on))
     }
 
     fn native_insert_claude(self: Pin<&mut Self>) -> QString {

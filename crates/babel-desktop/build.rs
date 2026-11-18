@@ -6,6 +6,7 @@ fn main() {
         "qml/ProjectsPage.qml",
         "qml/AccountDialog.qml",
         "qml/NativePage.qml",
+        "qml/SegmentsView.qml",
         "qml/LanguageDialog.qml",
         "qml/VersionsDialog.qml",
         "qml/SettingsDialog.qml",

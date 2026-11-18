@@ -45,6 +45,42 @@ Kirigami.Page {
 
     readonly property real pxPerPt: zoom * 96 / 72
     property bool showMarks: true
+    // The text view (rows of segments) instead of the pages; remembered.
+    property bool textView: viewSettings.textView
+
+    Settings {
+        id: viewSettings
+        category: "editor"
+        property bool textView: false
+    }
+
+    function setTextView(on) {
+        if (on === textView)
+            return;
+        textView = on;
+        viewSettings.textView = on;
+        if (!editing)
+            return;
+        if (on) {
+            Backend.nativeShowPages(false);
+            segments.load();
+        } else {
+            answer(Backend.nativeShowPages(true), false);
+            ime.forceActiveFocus();
+        }
+    }
+
+    function testSegments() {
+        return segments;
+    }
+
+    function openContextMenu() {
+        contextMenu.popup();
+    }
+
+    function attachClaude() {
+        attachClaudeDialog.open();
+    }
     property string targetLang: ""
 
     signal exportRequested(string id)
@@ -103,8 +139,13 @@ Kirigami.Page {
             r.all = true;
             answer(JSON.stringify(r), false);
             unsaved = false;
+            if (textView) {
+                Backend.nativeShowPages(false);
+                segments.load();
+            }
         }
-        ime.forceActiveFocus();
+        if (!textView)
+            ime.forceActiveFocus();
     }
 
     function close() {
@@ -206,6 +247,10 @@ Kirigami.Page {
             issuePopup.show(r.issue);
         else
             issuePopup.close();
+        if (r.changed)
+            unsaved = true;
+        if (textView)
+            segments.afterAnswer(r);
     }
 
     function refreshIssues() {
@@ -355,6 +400,14 @@ Kirigami.Page {
             text: "Zoom In"
             displayHint: Kirigami.DisplayHint.IconOnly
             onTriggered: page.zoom = Math.min(3, page.zoom * 1.2)
+        },
+        Kirigami.Action {
+            icon.name: page.textView ? "document-preview" : "view-list-text"
+            text: page.textView ? "Page View" : "Text View"
+            tooltip: page.textView ? "The pages as they will print (Ctrl+T)" : "The segments side by side, as text (Ctrl+T)"
+            displayHint: Kirigami.DisplayHint.KeepVisible
+            shortcut: "Ctrl+T"
+            onTriggered: page.setTextView(!page.textView)
         },
         Kirigami.Action {
             icon.name: "document-export"
@@ -513,9 +566,17 @@ Kirigami.Page {
         opacity: 0.35
     }
 
+    SegmentsView {
+        id: segments
+        anchors.fill: parent
+        visible: page.textView
+        page: page
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
+        visible: !page.textView
 
         ListView {
             id: left
@@ -725,7 +786,8 @@ Kirigami.Page {
     // receives is passed on and cleared; text being composed shows below.
     TextInput {
         id: ime
-        focus: true
+        focus: !page.textView
+        enabled: !page.textView
         // Behind the pages: a press on the caret must reach the page, not this.
         z: -1
         opacity: 0

@@ -235,6 +235,55 @@ check(stylesXml.includes('w:val="sv-SE"'), 'and is marked Swedish');
   check(!!(await page.evaluate(() => __babel.P.view.state.claude)), 'the attached file is still there after a reload');
 }
 
+// The text view: segments side by side, typed in with the keyboard.
+{
+  await page.click('#btnView');
+  await page.waitForSelector('.seg-row .seg-tgt');
+  const n = await page.$$eval('.seg-row', r => r.length);
+  check(n >= 46 && await page.isVisible('#segView') && !(await page.isVisible('#tgtDoc canvas')), `the text view shows ${n} rows instead of the pages`);
+  const cell = pid => page.locator(`.seg-row[data-pid="${pid}"] .seg-tgt`);
+  const cellText = pid => cell(pid).evaluate(e => e.textContent);
+  await cell('document:18').click();
+  await page.keyboard.press('Home');
+  await page.keyboard.type('Väg');
+  await page.waitForTimeout(100);
+  check((await paraXml('document:18')).includes('VägTransport'), 'typing in a row edits the translation');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Shift+ArrowLeft');
+  await page.keyboard.press('Control+b');
+  await page.waitForTimeout(100);
+  check(/<w:b\/>(?:(?!<\/w:r>).)*>Väg</.test(await paraXml('document:18')), 'Ctrl+B makes the selection bold');
+  check(await cell('document:18').evaluate(e => !!e.querySelector('b')), 'and the row shows it bold');
+  await page.keyboard.press('Control+z');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(100);
+  check(!(await paraXml('document:18')).includes('Väg'), 'Ctrl+Z undoes the bold and the typing');
+  await page.keyboard.press('Enter');
+  check(await page.$eval('.seg-row.active', e => e.dataset.pid) === 'document:19', 'Enter goes to the next segment');
+  await page.keyboard.press('Control+Enter');
+  await page.waitForTimeout(100);
+  const doneNow = await page.$eval('.seg-row[data-pid="document:19"]', e => e.classList.contains('done'));
+  const activeNow = await page.$eval('.seg-row.active', e => e.dataset.pid);
+  check(doneNow && activeNow === 'document:20', `Ctrl+Enter marks it done and goes on to the next row (done ${doneNow}, now at ${activeNow})`);
+  // A footnote mark can't be deleted.
+  const before = await paraXml('document:10');
+  await cell('document:10').click();
+  await page.keyboard.press('Home');
+  for (let i = 0; i < 34; i++) await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(100);
+  check(await paraXml('document:10') === before && (await cellText('document:10')).includes('①'), 'a chip can’t be deleted (the row shows it again)');
+  // Claude's translation with Ctrl+1.
+  await page.keyboard.press('Control+1');
+  await page.waitForTimeout(150);
+  check((await cellText('document:10')).startsWith('En fotnot följer efter denna mening.①'), 'Ctrl+1 inserts Claude’s translation, the chip in its place');
+  check(await page.$eval('.seg-claude', e => e.textContent.startsWith('En fotnot')), 'the panel shows Claude’s translation of the row');
+  await page.screenshot({ path: path.join(OUT, 'wasm-text-view.png') });
+  // Back to the pages: drawn as the edits left them.
+  await page.click('#btnView');
+  await page.waitForTimeout(300);
+  check(await page.isVisible('#tgtDoc canvas') && !(await page.isVisible('#segView')), 'back to the pages');
+}
+
 check(!errors.length, 'no page errors' + (errors.length ? ': ' + errors.join(' | ') : ''));
 await browser.close();
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');

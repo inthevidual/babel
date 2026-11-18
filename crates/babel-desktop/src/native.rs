@@ -25,6 +25,8 @@ struct Native {
     src_versions: Vec<u32>,
     dir: PathBuf,
     unsaved_since: Option<Instant>,
+    /// The pages are on screen (not the text view): draw them as they change.
+    pages_shown: bool,
     /// For versions every few minutes of work, as the web editor makes them.
     last_version: Instant,
     changed_since_version: bool,
@@ -86,6 +88,13 @@ impl Native {
 
     /// Draws what changed; returns the translation's pages to reload in QML.
     fn redraw(&mut self) -> (bool, Vec<Value>) {
+        // In the text view the pages wait until they are shown again.
+        if !self.pages_shown {
+            if self.editor.has_pending_redraw() {
+                self.unsaved_since.get_or_insert_with(Instant::now);
+            }
+            return (false, vec![]);
+        }
         let (all, pages) = self.editor.take_redraw();
         self.versions.resize(self.editor.page_count(), 0);
         for &i in &pages {
@@ -123,6 +132,8 @@ impl Native {
 
     /// The editor's answer with the pages drawn again, marks and project meta saved.
     fn answer(&mut self, mut v: Value) -> Value {
+        // Something changed to save (the pages show it, or the text view).
+        v["changed"] = json!(self.editor.has_pending_redraw());
         let (all, pages) = self.redraw();
         v["pages"] = json!(pages);
         v["all"] = json!(all);
@@ -176,7 +187,7 @@ pub fn open(id: &str) -> anyhow::Result<Value> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
     let had_work = !translated_is_empty;
-    let mut s = Native { project: id.to_owned(), editor, rev, versions: vec![], src_versions: vec![], dir, unsaved_since: None, last_version: Instant::now(), changed_since_version: false };
+    let mut s = Native { project: id.to_owned(), editor, rev, versions: vec![], src_versions: vec![], dir, unsaved_since: None, pages_shown: true, last_version: Instant::now(), changed_since_version: false };
     let source = s.source_json()?;
     let (_, pages) = s.redraw();
     // Ids given on opening are saved with the next save, not as an edit now.
@@ -292,6 +303,40 @@ pub fn original_text() -> Option<String> {
 
 pub fn revert() -> Value {
     with(|s| { let v = s.editor.revert_paragraph(); s.answer(v) }, Value::Null)
+}
+
+// ── The text view ─────────────────────────────────────────────────────
+
+pub fn rows() -> Value {
+    with(|s| s.editor.rows(), Value::Null)
+}
+
+pub fn row_changes() -> Value {
+    with(|s| s.editor.take_row_changes(), Value::Null)
+}
+
+pub fn text_select(pid: &str, anchor: usize, caret: usize) -> Value {
+    with(|s| { let v = s.editor.text_select(pid, anchor, caret); s.answer(v) }, Value::Null)
+}
+
+pub fn text_edit(pid: &str, from: usize, to: usize, text: &str) -> Value {
+    with(|s| { let v = s.editor.text_edit(pid, from, to, text); s.answer(v) }, Value::Null)
+}
+
+pub fn claude_spans(pid: &str) -> Value {
+    with(|s| s.editor.claude_spans(pid), Value::Null)
+}
+
+/// The pages are shown (the page view) or not (the text view); shown again,
+/// they are drawn as the edits since have left them.
+pub fn show_pages(on: bool) -> Value {
+    with(
+        |s| {
+            s.pages_shown = on;
+            if on { let v = s.editor.state(); s.answer(v) } else { Value::Null }
+        },
+        Value::Null,
+    )
 }
 
 // ── Claude's translation (a segment file) ─────────────────────────────

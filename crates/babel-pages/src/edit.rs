@@ -141,6 +141,25 @@ pub struct Session {
     redo: Vec<Snapshot>,
     /// Inside [`Session::group`]: typing never joins an earlier step.
     grouping: bool,
+    /// Per part, where each paragraph is (and the part's length then): found
+    /// in one pass, kept while the part keeps its length (an edit within one
+    /// paragraph that keeps its length moves no paragraph).
+    ranges: HashMap<String, (usize, HashMap<String, std::ops::Range<usize>>)>,
+}
+
+/// Every paragraph of the document by its Babel id: the body and every part
+/// (headers, footers, notes, text boxes), laid out on a page or not.
+fn paragraphs_of(doc: &Document) -> HashMap<String, (StoryRef, Path)> {
+    let mut at = HashMap::new();
+    let stories = std::iter::once(StoryRef::Body).chain(doc.parts.keys().map(|&k| StoryRef::Part(k)));
+    for story in stories {
+        for path in doc.para_paths(story) {
+            if let Some(id) = doc.para(story, &path).and_then(|p| p.source.as_deref()) {
+                at.entry(id.to_owned()).or_insert((story, path));
+            }
+        }
+    }
+    at
 }
 
 fn part_key(path: &str) -> &str {
@@ -183,12 +202,7 @@ impl Session {
         let doc = wordcraft_docx::read(&crate::renderable(&original, &parts)?)?;
         let mut cache = LayoutCache::default();
         let layout = wordcraft_layout::layout(&doc, &mut cache, &crate::options());
-        let mut at = HashMap::new();
-        for (story, path) in layout.index.keys() {
-            if let Some(id) = doc.para(*story, path).and_then(|p| p.source.as_deref()) {
-                at.insert(id.to_owned(), (*story, path.clone()));
-            }
-        }
+        let at = paragraphs_of(&doc);
         let prints = layout.pages.iter().map(page_print).collect();
         Ok(Session {
             original,
@@ -205,6 +219,7 @@ impl Session {
             undo: vec![],
             redo: vec![],
             grouping: false,
+            ranges: HashMap::new(),
         })
     }
 
@@ -315,6 +330,24 @@ impl Session {
         }
     }
 
+    /// Where paragraph `pid` is in `part`'s XML.
+    fn range_of(&mut self, part: &str, pid: &str) -> Option<std::ops::Range<usize>> {
+        let xml = self.parts.get(part)?;
+        let fresh = self.ranges.get(part).is_some_and(|(len, _)| *len == xml.len());
+        if !fresh {
+            self.ranges.insert(part.to_owned(), (xml.len(), babel_docx::para::paragraph_ranges(xml)));
+        }
+        let r = self.ranges.get(part)?.1.get(pid)?.clone();
+        // It must still be that paragraph; else find it the slow way.
+        let ok = xml.get(r.clone()).is_some_and(|p| p.starts_with("<w:p") && p[..p.find('>').unwrap_or(0)].contains(&format!("data-bp=\"{pid}\"")));
+        if ok {
+            Some(r)
+        } else {
+            self.ranges.remove(part);
+            find_paragraph(xml, pid)
+        }
+    }
+
     /// Where a paragraph is.
     pub fn locate(&self, pid: &str) -> Option<Pos> {
         self.at.get(pid).map(|(s, p)| Pos::new(*s, p.clone(), 0))
@@ -336,8 +369,8 @@ impl Session {
         if !self.paras.contains_key(&pid) {
             let key = pid.split(':').next().unwrap_or("");
             let part = self.parts.keys().find(|p| part_key(p) == key).cloned().ok_or(EditError::NotEditable)?;
+            let range = self.range_of(&part, &pid).ok_or(EditError::NotEditable)?;
             let xml = &self.parts[&part];
-            let range = find_paragraph(xml, &pid).ok_or(EditError::NotEditable)?;
             let r = runs(&xml[range]).map_err(|e| EditError::Internal(e.to_string()))?;
             let wp = self.doc.para(pos.story, &pos.path).ok_or(EditError::NotEditable)?;
             let mut pieces = vec![];
@@ -578,8 +611,8 @@ impl Session {
 
     fn snapshot(&mut self, pos: &Pos) -> Result<Snapshot, EditError> {
         let para = self.para_state(pos)?.clone();
+        let range = self.range_of(&para.part, &para.pid).ok_or(EditError::NotEditable)?;
         let xml = &self.parts[&para.part];
-        let range = find_paragraph(xml, &para.pid).ok_or(EditError::NotEditable)?;
         let wc = self.doc.para(pos.story, &pos.path).ok_or(EditError::NotEditable)?.clone();
         Ok(Snapshot { pid: para.pid.clone(), story: pos.story, path: pos.path.clone(), xml: xml[range].to_owned(), para, wc, caret: pos.clone(), typing: None })
     }
@@ -609,8 +642,8 @@ impl Session {
         let pos = Pos::new(snap.story, snap.path.clone(), snap.caret.off);
         let mut current = self.snapshot(&pos)?;
         current.caret = snap.typing.as_ref().map(|(_, p)| p.clone()).unwrap_or_else(|| snap.caret.clone());
+        let range = self.range_of(&snap.para.part, &snap.pid).ok_or(EditError::NotEditable)?;
         let xml = self.parts.get_mut(&snap.para.part).ok_or(EditError::NotEditable)?;
-        let range = find_paragraph(xml, &snap.pid).ok_or(EditError::NotEditable)?;
         xml.replace_range(range, &snap.xml);
         self.dirty.insert(snap.para.part.clone());
         self.edited.insert(snap.pid.clone());
@@ -666,8 +699,8 @@ impl Session {
         let snap = self.snapshot(pos)?;
         let pid = snap.pid.clone();
         let part = snap.para.part.clone();
+        let range = self.range_of(&part, &pid).ok_or(EditError::NotEditable)?;
         let doc_xml = self.parts.get_mut(&part).ok_or(EditError::NotEditable)?;
-        let range = find_paragraph(doc_xml, &pid).ok_or(EditError::NotEditable)?;
         doc_xml.replace_range(range, xml);
         // Runs a structural change split off need ids, or they could not be edited.
         if babel_docx::ooxml::lacks_run_id(xml) {
@@ -706,12 +739,8 @@ impl Session {
         self.dirty.clear();
         self.edited.clear();
         let pages = self.relayout();
-        self.at.clear();
-        for (story, path) in self.layout.index.keys() {
-            if let Some(id) = self.doc.para(*story, path).and_then(|p| p.source.as_deref()) {
-                self.at.insert(id.to_owned(), (*story, path.clone()));
-            }
-        }
+        self.at = paragraphs_of(&self.doc);
+        self.ranges.clear();
         Ok(pages)
     }
 
@@ -724,6 +753,8 @@ impl Session {
 
     /// Rewrites the paragraph's `w:p` from its pieces.
     fn write_back(&mut self, pid: &str) -> Result<(), EditError> {
+        let part = self.paras.get(pid).ok_or(EditError::NotEditable)?.part.clone();
+        let range = self.range_of(&part, pid).ok_or(EditError::NotEditable)?;
         let para = self.paras.get_mut(pid).ok_or(EditError::NotEditable)?;
         let mut tokens = vec![];
         let mut last_rid: Option<String> = None;
@@ -744,7 +775,6 @@ impl Session {
             }
         }
         let xml = self.parts.get(&para.part).ok_or(EditError::NotEditable)?;
-        let range = find_paragraph(xml, pid).ok_or(EditError::NotEditable)?;
         let new = apply_paragraph(&xml[range.clone()], &tokens, &mut para.info, &mut self.templates)
             .map_err(|e| EditError::Internal(e.to_string()))?;
         let part = para.part.clone();

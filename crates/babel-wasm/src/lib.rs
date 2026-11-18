@@ -180,6 +180,36 @@ impl WasmEditor {
         self.editor.paste_link(clipboard).to_string()
     }
 
+    // ── The text view ─────────────────────────────────────────────────────
+
+    /// Every row (segment) of the text view.
+    pub fn rows(&mut self) -> String {
+        self.editor.rows().to_string()
+    }
+
+    /// The rows changed since the last call: {all, rows}.
+    #[wasm_bindgen(js_name = rowChanges)]
+    pub fn row_changes(&mut self) -> String {
+        self.editor.take_row_changes().to_string()
+    }
+
+    /// The selection in a row (UTF-16 positions of its text): anchor to caret.
+    #[wasm_bindgen(js_name = textSelect)]
+    pub fn text_select(&mut self, pid: &str, anchor: usize, caret: usize) -> String {
+        self.editor.text_select(pid, anchor, caret).to_string()
+    }
+
+    /// Typing in a row: its text's from..to becomes `text`.
+    #[wasm_bindgen(js_name = textEdit)]
+    pub fn text_edit(&mut self, pid: &str, from: usize, to: usize, text: &str) -> String {
+        self.editor.text_edit(pid, from, to, text).to_string()
+    }
+
+    #[wasm_bindgen(js_name = claudeSpans)]
+    pub fn claude_spans(&self, pid: &str) -> String {
+        self.editor.claude_spans(pid).to_string()
+    }
+
     // ── Claude's translation (a segment file) ─────────────────────────────
 
     /// Replaces the paragraph at the caret with Claude's translation of it.

@@ -334,3 +334,42 @@ kbd { font: 600 11px/1 ui-monospace, monospace; border: 1px solid var(--line); b
 .w-preedit { position: fixed; z-index: 6; background: var(--raised); color: var(--fg); text-decoration: underline; padding: 0 1px; pointer-events: none; white-space: pre; }
 .pop-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .pop-acts { display: flex; gap: 6px; }
+
+/* ── The text view (segments side by side) ──────────────────────────────── */
+
+.segview { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--panel); z-index: 2; }
+.work.text-mode .panel { visibility: hidden; }
+body:has(.work.text-mode) .zoom, body:has(.work.text-mode) #syncToggle { display: none; }
+.seg-bar { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.seg-search { width: 24rem; max-width: 45%; padding: 5px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); color: var(--fg); font: inherit; }
+.seg-count { margin-left: auto; color: var(--muted); font-size: 13px; }
+.seg-body { flex: 1; display: grid; grid-template-columns: 1fr 19rem; min-height: 0; }
+.seg-list { overflow: auto; }
+.seg-row { display: grid; grid-template-columns: 3.4rem 1fr 1fr; border-bottom: 1px solid var(--line); content-visibility: auto; contain-intrinsic-size: auto 3rem; }
+.seg-row:nth-child(even) { background: color-mix(in srgb, var(--fg) 2.5%, transparent); }
+.seg-row.active { background: var(--active); box-shadow: inset 3px 0 0 var(--accent); }
+.seg-n { padding: 10px 6px 10px 10px; color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.seg-n small { font-size: 11px; }
+.seg-n i { font-style: normal; }
+.seg-n .done { color: var(--done); }
+.seg-n .edited { color: var(--edited); }
+.seg-src, .seg-tgt { padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; tab-size: 6; }
+.seg-src { border-right: 1px solid var(--line); }
+.seg-tgt { outline: none; caret-color: var(--accent); }
+.seg-tgt:focus { background: color-mix(in srgb, var(--raised) 70%, transparent); }
+.seg-row .chip { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--muted); border-radius: 3px; padding: 0 1px; user-select: all; }
+.seg-row .lnk, .seg-claude .lnk { color: var(--accent); text-decoration: underline; }
+.seg-side { border-left: 1px solid var(--line); padding: 12px 14px; overflow: auto; background: var(--bg); }
+.seg-side h3 { margin: 0 0 10px; font-size: 15px; }
+.seg-side h4 { margin: 12px 0 4px; font-size: 13px; }
+.seg-side button { display: block; margin: 6px 0; }
+.seg-side hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.seg-claude { white-space: pre-wrap; line-height: 1.5; margin: 4px 0 10px; }
+.seg-claude .chip { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--muted); border-radius: 3px; padding: 0 1px; }
+/* A chip is one character of text (①); it shows its number, in any font. */
+.seg-row .chip, .seg-claude .chip { font-size: 0; display: inline-block; vertical-align: baseline; }
+.seg-row .chip::after, .seg-claude .chip::after { content: attr(data-n); font-size: 11px; line-height: 1; padding: 1px 4px; display: inline-block; font-weight: 600; }
+@media (max-width: 900px) {
+  .seg-body { grid-template-columns: 1fr; }
+  .seg-side { display: none; }
+}

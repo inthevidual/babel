@@ -295,15 +295,9 @@ fn a_whole_document_translated_with_the_skill() {
         assert!(pages.iter().all(|&p| p < e.page_count()), "{pid}: pages {pages:?} of {}", e.page_count());
         inserted += 1;
     }
-    // The header and footer are reached by clicking on the page.
-    for (y, pid) in [(40.0, "header1:0"), (800.0, "footer1:0")] {
-        let v = e.click(0, 400.0, y, false);
-        assert_eq!(v["paragraph"]["pid"], pid);
-        let v = e.insert_claude();
-        assert!(v["error"].is_null() && v["message"].is_null(), "{pid}: {v}");
-        inserted += 1;
-    }
+    // The header and footer were reached too; clicking on the page finds them as well.
     let v = e.click(0, 400.0, 40.0, false);
+    assert_eq!(v["paragraph"]["pid"], "header1:0");
     assert_eq!(v["paragraph"]["claude"], true);
     assert_eq!(inserted, 46, "every paragraph");
     // Every paragraph counts as done, but "Budget" and "Status", which read the same in Swedish.
