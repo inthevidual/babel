@@ -1,0 +1,20 @@
+[package]
+name = "babel-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+babel-core = { version = "0.1.0", path = "../babel-core" }
+babel-docx = { version = "0.1.0", path = "../babel-docx" }
+babel-editor = { version = "0.1.0", path = "../babel-editor" }
+babel-pages = { version = "0.1.0", path = "../babel-pages" }
+babel-server = { version = "0.1.0", path = "../babel-server", default-features = false }
+babel-sync = { version = "0.1.0", path = "../babel-sync" }
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["full"] }
+uuid = { version = "1.29.0", features = ["v4"] }

@@ -1,0 +1,5 @@
+[
+{"signIn": ["@SERVER@", "tester", "testpass123"], "wait": 5000},
+{"name": "signed in and synced", "expect": {"signedIn": true}},
+{"grab": "@OUT@/synced.png", "wait": 300}
+]

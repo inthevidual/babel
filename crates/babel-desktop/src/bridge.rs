@@ -1,6 +1,6 @@
-//! The QML side's view of the app: the translations, opening and exporting
-//! them, versions, settings, the native editor (native.rs) and the account
-//! (sync.rs). Answers are JSON strings.
+//! The QML side's view of the app (babel-app): the translations, opening and
+//! exporting them, versions, settings, the editor and the account. Answers
+//! are JSON strings.
 
 #[cxx_qt::bridge]
 pub mod qobject {
@@ -356,8 +356,9 @@ use cxx_qt::Threading;
 use cxx_qt_lib::{QString, QUrl};
 use serde_json::{json, Value};
 
-use crate::app::app;
-use crate::{native, projects, sync};
+use babel_app::{account, projects, session as native, Event};
+
+use crate::pages;
 
 #[derive(Default)]
 pub struct BackendRust {
@@ -368,44 +369,28 @@ pub struct BackendRust {
     syncing: bool,
 }
 
-static QT: std::sync::OnceLock<cxx_qt::CxxQtThread<qobject::Backend>> = std::sync::OnceLock::new();
-
-/// Tells QML that new proofing results are in (from any thread).
-pub fn notify_issues() {
-    if let Some(qt) = QT.get() {
-        let _ = qt.queue(|o| o.native_issues_changed());
-    }
-}
-
 impl cxx_qt::Initialize for qobject::Backend {
     fn initialize(self: Pin<&mut Self>) {
-        let _ = QT.set(self.qt_thread());
-        let a = app();
-        // Any save, from the editor or from syncing, refreshes the list.
+        // What babel-app tells (from any thread), as signals and properties.
         let qt = self.qt_thread();
-        let mut changes = a.state.changes.subscribe();
-        let uid = a.user.id;
-        a.rt.spawn(async move {
-            loop {
-                match changes.recv().await {
-                    Ok(c) if c.user != uid => continue,
-                    // The translation being edited, saved from elsewhere.
-                    Ok(c) if c.origin.as_deref() != Some("native") && native::current().as_deref() == Some(c.project.as_str()) => {
-                        let id = QString::from(&c.project);
-                        let _ = qt.queue(move |o| o.native_external_change(id));
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    _ => {}
+        babel_app::connect(move |e| {
+            let _ = match e {
+                Event::Issues => qt.queue(|o| o.native_issues_changed()),
+                Event::ExternalChange(id) => {
+                    let id = QString::from(&id);
+                    qt.queue(move |o| o.native_external_change(id))
                 }
-                // Typing saves every second or so; one refresh per burst is plenty.
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                while changes.try_recv().is_ok() {}
-                if qt.queue(|o| o.projects_changed()).is_err() {
-                    break;
-                }
-            }
+                Event::Projects => qt.queue(|o| o.projects_changed()),
+                Event::Sync(st) => qt.queue(move |mut o| {
+                    o.as_mut().set_sync_server(QString::from(&st.server));
+                    o.as_mut().set_sync_user(QString::from(&st.user));
+                    o.as_mut().set_signed_in(st.signed_in);
+                    o.as_mut().set_syncing(st.syncing);
+                    o.as_mut().set_sync_status(QString::from(&st.status));
+                }),
+                Event::Message { text, error } => qt.queue(move |o| o.message(QString::from(&text), error)),
+            };
         });
-        sync::attach(self);
     }
 }
 
@@ -421,19 +406,7 @@ impl qobject::Backend {
     // ── Translations ──────────────────────────────────────────────────
 
     fn projects(&self) -> QString {
-        let a = app();
-        let list = a.db(|st| st.list_projects(&a.user)).unwrap_or_default();
-        let slim: Vec<Value> = list
-            .iter()
-            .map(|p| {
-                json!({
-                    "id": p["id"], "name": p["name"], "fileName": p["fileName"],
-                    "targetLang": p["targetLang"], "updatedAt": p["updatedAt"], "stats": p["stats"],
-                    "langName": p["targetLang"].as_str().and_then(projects::language_name),
-                })
-            })
-            .collect();
-        s(&Value::Array(slim))
+        s(&projects::list())
     }
 
     fn languages(&self) -> QString {
@@ -487,12 +460,8 @@ impl qobject::Backend {
     }
 
     fn delete_project(self: Pin<&mut Self>, id: &QString) {
-        let a = app();
-        let id = id.to_string();
-        let pid = id.clone();
-        match a.db(|st| st.delete_project(&a.user, &pid)) {
-            Ok(()) => a.state.notify(babel_server::Change { user: a.user.id, project: id, rev: 0, origin: None, deleted: true }),
-            Err(e) => self.message(QString::from(&format!("Could not delete: {e}")), true),
+        if let Err(e) = projects::delete(&id.to_string()) {
+            self.message(QString::from(&format!("Could not delete: {e}")), true);
         }
     }
 
@@ -538,7 +507,8 @@ impl qobject::Backend {
     // ── The editor ────────────────────────────────────────────────────
 
     fn native_open(self: Pin<&mut Self>, id: &QString) -> QString {
-        match native::open(&id.to_string()) {
+        let id = id.to_string();
+        match pages::Png::new(&id).and_then(|p| native::open(&id, Box::new(p))) {
             Ok(v) => s(&v),
             Err(e) => {
                 self.message(QString::from(&format!("Could not open the translation: {e}")), true);
@@ -718,11 +688,7 @@ impl qobject::Backend {
     }
 
     fn segments_name(&self, id: &QString) -> QString {
-        let a = app();
-        let id = id.to_string();
-        let meta = a.db(|st| st.get_project(&a.user, &id)).unwrap_or(Value::Null);
-        let name = meta["name"].as_str().unwrap_or("document");
-        QString::from(&format!("{name} segments.md"))
+        QString::from(&projects::segments_name(&id.to_string()))
     }
 
     fn native_paste_link(self: Pin<&mut Self>) -> QString {
@@ -765,16 +731,17 @@ impl qobject::Backend {
     // ── Account ───────────────────────────────────────────────────────
 
     fn sign_in(self: Pin<&mut Self>, server: &QString, user: &QString, password: &QString) {
-        sync::sign_in(self, server.to_string(), user.to_string(), password.to_string());
+        let host = std::fs::read_to_string("/etc/hostname").map(|h| h.trim().to_owned()).unwrap_or_default();
+        account::sign_in(server.to_string(), user.to_string(), password.to_string(), host);
     }
 
     fn sign_out(self: Pin<&mut Self>) {
-        sync::sign_out(self);
+        account::sign_out();
     }
 
     fn sync_now(self: Pin<&mut Self>) {
-        sync::sync_now();
+        account::sync_now();
     }
 }
 
-pub use qobject::{babel_exit_on_load_failure, babel_init_style, Backend};
+pub use qobject::{babel_exit_on_load_failure, babel_init_style};

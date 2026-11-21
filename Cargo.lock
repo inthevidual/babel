@@ -250,6 +250,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "babel-app"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "babel-core",
+ "babel-docx",
+ "babel-editor",
+ "babel-pages",
+ "babel-server",
+ "babel-sync",
+ "chrono",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "babel-core"
 version = "0.1.0"
 dependencies = [
@@ -273,27 +291,15 @@ name = "babel-desktop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "axum",
- "babel-core",
- "babel-docx",
+ "babel-app",
  "babel-editor",
- "babel-pages",
- "babel-server",
- "babel-sync",
- "chrono",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
  "image",
- "reqwest",
- "serde",
  "serde_json",
- "tokio",
- "tracing",
  "tracing-subscriber",
- "uuid",
- "wordcraft-doc",
 ]
 
 [[package]]
@@ -319,6 +325,17 @@ dependencies = [
  "web-time",
  "wordcraft-doc",
  "wordcraft-layout",
+]
+
+[[package]]
+name = "babel-mac"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "babel-app",
+ "babel-editor",
+ "babel-pages",
+ "serde_json",
 ]
 
 [[package]]

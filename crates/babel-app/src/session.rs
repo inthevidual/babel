@@ -1,29 +1,64 @@
-//! The native editor in the desktop app: babel-editor's Editor, with its
-//! pages drawn to PNG in the runtime directory (memory-backed), saved into
-//! the local store a moment after typing stops, and its proofing requests
-//! sent to LanguageTool in the background.
+//! The editing session: babel-editor's Editor on the translation being
+//! edited, saved into the local store a moment after typing stops, and its
+//! proofing requests sent to LanguageTool in the background. The window
+//! draws the pages: each page the editor lays out again gets a new
+//! generation, and a [`Pages`] of the window's own draws it (to a file the
+//! window loads) or leaves it to the window to [`render`] when it shows it.
 
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use babel_editor::{proof, Editor, Key};
 use serde_json::{json, Value};
 
-use crate::app::app;
+use crate::app;
 
-/// Pixels per point the pages are drawn at.
-const SCALE: f32 = 2.0;
+/// The translation ("t") or the original ("s").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Target,
+    Source,
+}
+
+impl Side {
+    pub fn letter(self) -> &'static str {
+        match self {
+            Side::Target => "t",
+            Side::Source => "s",
+        }
+    }
+}
+
+/// How a window gets its pages: told of each page drawn again (generation
+/// `version`), it may draw it now and answer an address to load it from, or
+/// answer an empty one and [`render`] it when it is on screen.
+pub trait Pages: Send {
+    fn drawn(&mut self, editor: &Editor, side: Side, page: usize, version: u32) -> String;
+    /// The session is over.
+    fn close(&mut self) {}
+}
+
+/// Pages the window renders itself, when it shows them.
+pub struct OnDemand;
+
+impl Pages for OnDemand {
+    fn drawn(&mut self, _: &Editor, _: Side, _: usize, _: u32) -> String {
+        String::new()
+    }
+}
 
 struct Native {
     project: String,
     editor: Editor,
     /// The store's revision the editor's parts are based on.
     rev: i64,
-    /// Drawing generation per page, so QML reloads only what changed.
+    /// Drawing generation per page, so the window loads only what changed.
     versions: Vec<u32>,
     src_versions: Vec<u32>,
-    dir: PathBuf,
+    /// Their addresses, as the window's [`Pages`] gave them.
+    urls: Vec<String>,
+    src_urls: Vec<String>,
+    pages: Box<dyn Pages>,
     unsaved_since: Option<Instant>,
     /// The pages are on screen (not the text view): draw them as they change.
     pages_shown: bool,
@@ -36,18 +71,6 @@ struct Native {
 const VERSION_EVERY: Duration = Duration::from_secs(180);
 
 static NATIVE: Mutex<Option<Native>> = Mutex::new(None);
-
-fn runtime_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir).join("babel-pages")
-}
-
-fn write_png(file: &std::path::Path, w: u32, h: u32, px: &[u8]) -> anyhow::Result<()> {
-    use image::ImageEncoder;
-    let mut out = std::io::BufWriter::new(std::fs::File::create(file)?);
-    image::codecs::png::PngEncoder::new_with_quality(&mut out, image::codecs::png::CompressionType::Fast, image::codecs::png::FilterType::NoFilter)
-        .write_image(px, w, h, image::ExtendedColorType::Rgba8)?;
-    Ok(())
-}
 
 /// Settings, kept on this computer, as the web editor's: {proof, picky,
 /// dictionary: [...], endpoint, user, key, marks}.
@@ -67,23 +90,13 @@ fn save_proof_settings(v: &Value) {
 }
 
 impl Native {
-    fn file(&self, side: &str, page: usize) -> PathBuf {
-        let v = if side == "t" { &self.versions } else { &self.src_versions };
-        self.dir.join(format!("{side}{page}-v{}.png", v[page]))
-    }
-
-    fn draw(&mut self, page: usize) -> anyhow::Result<()> {
+    fn draw(&mut self, page: usize) {
         if self.versions.len() <= page {
             self.versions.resize(page + 1, 0);
+            self.urls.resize(page + 1, String::new());
         }
-        let old = (self.versions[page] > 0).then(|| self.file("t", page));
         self.versions[page] += 1;
-        let (w, h, px) = self.editor.render(page, SCALE);
-        write_png(&self.file("t", page), w, h, &px)?;
-        if let Some(old) = old {
-            let _ = std::fs::remove_file(old);
-        }
-        Ok(())
+        self.urls[page] = self.pages.drawn(&self.editor, Side::Target, page, self.versions[page]);
     }
 
     /// Draws what changed; returns the translation's pages to reload in QML.
@@ -97,8 +110,9 @@ impl Native {
         }
         let (all, pages) = self.editor.take_redraw();
         self.versions.resize(self.editor.page_count(), 0);
+        self.urls.resize(self.editor.page_count(), String::new());
         for &i in &pages {
-            let _ = self.draw(i);
+            self.draw(i);
         }
         if !pages.is_empty() {
             self.unsaved_since.get_or_insert_with(Instant::now);
@@ -112,22 +126,19 @@ impl Native {
             .iter()
             .filter_map(|&i| {
                 let s = sizes["target"].get(i)?;
-                Some(json!({ "index": i, "url": format!("file://{}", self.file("t", i).display()), "w": s["w"], "h": s["h"] }))
+                Some(json!({ "index": i, "url": self.urls[i], "v": self.versions[i], "w": s["w"], "h": s["h"] }))
             })
             .collect()
     }
 
-    fn source_json(&mut self) -> anyhow::Result<Vec<Value>> {
+    fn source_json(&mut self) -> Vec<Value> {
         let n = self.editor.source_page_count();
         if self.editor.take_source_redraw() {
             self.src_versions = vec![1; n];
-            for i in 0..n {
-                let (w, h, px) = self.editor.render_source(i, SCALE);
-                write_png(&self.file("s", i), w, h, &px)?;
-            }
+            self.src_urls = (0..n).map(|i| self.pages.drawn(&self.editor, Side::Source, i, 1)).collect();
         }
         let sizes = self.editor.page_sizes();
-        Ok((0..n).map(|i| json!({ "index": i, "url": format!("file://{}", self.file("s", i).display()), "w": sizes["source"][i]["w"], "h": sizes["source"][i]["h"] })).collect())
+        (0..n).map(|i| json!({ "index": i, "url": self.src_urls[i], "v": self.src_versions[i], "w": sizes["source"][i]["w"], "h": sizes["source"][i]["h"] })).collect()
     }
 
     /// The editor's answer with the pages drawn again, marks and project meta saved.
@@ -173,8 +184,9 @@ fn stored(id: &str, rev: Option<i64>) -> anyhow::Result<Opened> {
     .map_err(Into::into)
 }
 
-/// Opens the translation for editing and draws every page of both documents.
-pub fn open(id: &str) -> anyhow::Result<Value> {
+/// Opens the translation for editing and draws every page of both documents
+/// (with `pages`): {source: [{index, url, v, w, h}], pages, caret, …}.
+pub fn open(id: &str, pages: Box<dyn Pages>) -> anyhow::Result<Value> {
     let (docx, source, translated, rev, meta) = stored(id, None)?;
     let translated_is_empty = translated.is_empty();
     let mut editor = Editor::open(docx, source, translated, &meta)?;
@@ -183,12 +195,22 @@ pub fn open(id: &str) -> anyhow::Result<Value> {
         settings["picky"].as_bool().unwrap_or(false),
         settings["dictionary"].as_array().map(|d| d.iter().filter_map(|w| w.as_str().map(str::to_owned)).collect::<Vec<_>>()).unwrap_or_default(),
     );
-    let dir = runtime_dir().join(id);
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir)?;
     let had_work = !translated_is_empty;
-    let mut s = Native { project: id.to_owned(), editor, rev, versions: vec![], src_versions: vec![], dir, unsaved_since: None, pages_shown: true, last_version: Instant::now(), changed_since_version: false };
-    let source = s.source_json()?;
+    let mut s = Native {
+        project: id.to_owned(),
+        editor,
+        rev,
+        versions: vec![],
+        src_versions: vec![],
+        urls: vec![],
+        src_urls: vec![],
+        pages,
+        unsaved_since: None,
+        pages_shown: true,
+        last_version: Instant::now(),
+        changed_since_version: false,
+    };
+    let source = s.source_json();
     let (_, pages) = s.redraw();
     // Ids given on opening are saved with the next save, not as an edit now.
     s.unsaved_since = None;
@@ -241,8 +263,8 @@ pub fn current() -> Option<String> {
 /// Saves what is unsaved, then forgets the session.
 pub fn close() {
     let _ = save();
-    if let Some(s) = NATIVE.lock().unwrap().take() {
-        let _ = std::fs::remove_dir_all(&s.dir);
+    if let Some(mut s) = NATIVE.lock().unwrap().take() {
+        s.pages.close();
     }
 }
 
@@ -251,6 +273,17 @@ fn with<T>(f: impl FnOnce(&mut Native) -> T, none: T) -> T {
         Some(s) => f(s),
         None => none,
     }
+}
+
+/// Draws a page as it is now, `scale` pixels per point: (width, height, RGBA).
+pub fn render(side: Side, page: usize, scale: f32) -> Option<(u32, u32, Vec<u8>)> {
+    with(
+        |s| match side {
+            Side::Target => (page < s.editor.page_count()).then(|| s.editor.render(page, scale)),
+            Side::Source => (page < s.editor.source_page_count()).then(|| s.editor.render_source(page, scale)),
+        },
+        None,
+    )
 }
 
 pub fn click(page: usize, x: f32, y: f32, extend: bool) -> Value {
@@ -517,7 +550,7 @@ fn start_proofing(project: String) {
                     }
                 }
             }
-            crate::bridge::notify_issues();
+            crate::emit(crate::Event::Issues);
             tokio::time::sleep(Duration::from_millis(proof::MIN_INTERVAL_MS) + backoff).await;
         }
     });

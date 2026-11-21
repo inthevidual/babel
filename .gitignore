@@ -7,3 +7,5 @@
 /packaging/arch/*
 !/packaging/arch/PKGBUILD
 !/packaging/arch/.SRCINFO
+/macos/.build/
+/macos/.swiftpm/

@@ -1,0 +1,5 @@
+module CBabel [system] {
+    header "../../../crates/babel-mac/include/babel.h"
+    link "babel_mac"
+    export *
+}

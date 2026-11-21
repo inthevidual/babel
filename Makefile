@@ -4,12 +4,16 @@
 PREFIX ?= $(HOME)/.local
 BIN = target/release
 
-.PHONY: all desktop server wasm install install-server test uninstall skill
+.PHONY: all desktop mac server wasm install install-server test uninstall skill
 
 all: desktop server
 
 desktop:
 	cargo build --release -p babel-desktop
+
+# The Mac app: target/macos/Babel.app (Swift and AppKit; no Qt).
+mac:
+	packaging/macos/build-app.sh
 
 server: wasm
 	cargo build --release -p babel-server

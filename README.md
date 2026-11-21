@@ -8,10 +8,11 @@ a `.docx` that is the original file with the words changed: same styles,
 numbering, tables, images, headers, footers, footnotes, fields and section
 setup.
 
-Babel comes in three forms, all with the same editor:
+Babel comes in four forms, all with the same editor:
 
 | | | Where translations are kept |
 |---|---|---|
+| **Mac app** (`macos/`) | A native AppKit window, Swift + Rust | On the Mac; synced with a Babel server when signed in |
 | **Desktop app** (`babel-desktop`) | A KDE/Kirigami window, Rust + Qt | On the computer; synced with a Babel server when signed in |
 | **Server** (`babel-server`) | The web app with accounts | On the server, per user |
 | **Static site** (<https://babel.cptjanst.se>) | No build step, nothing uploaded | In the browser (IndexedDB) |
@@ -26,7 +27,10 @@ crates/babel-wasm     babel-editor for the browser (WebAssembly)
 crates/babel-core     storage (SQLite) and the paragraph merge
 crates/babel-server   HTTP API + the web app (embedded), accounts
 crates/babel-sync     syncing a local store with a server account
-crates/babel-desktop  the Kirigami app (cxx-qt): babel-editor natively, the local store, sync
+crates/babel-app      the desktop apps without a toolkit: local store, projects, editing session, account
+crates/babel-desktop  the Kirigami app (cxx-qt) on babel-app
+crates/babel-mac      babel-app behind a C interface, for the Mac app
+macos/                the Mac app: Swift, AppKit (SwiftUI for the sidebar and dialogs)
 web/                  the editor: HTML/CSS/JS, no build step
 ```
 
@@ -96,8 +100,16 @@ for both platforms:
 - in the browser it is WebAssembly (`crates/babel-wasm`, about 3.7 MB with
   brotli, built into `web/wasm/` by `make wasm`), drawn on canvases by
   `web/js/wasm-view.js`, with the fonts in `web/fonts/` given to it;
-- in the desktop app it is native Rust, drawn into the Kirigami window
-  (opening a translation goes straight to it).
+- in the desktop apps it is native Rust, drawn into the Kirigami window or
+  the Mac app's AppKit views (opening a translation goes straight to it).
+
+The desktop apps share everything but the window: `babel-app` keeps the
+store, makes and exports translations, runs the editing session (saving a
+second after typing stops, versions, proofing in the background) and the
+account, and answers in JSON as the editor does. The Qt app reaches it
+through cxx-qt (`bridge.rs`), the Mac app through `babel-mac`'s C interface
+(`include/babel.h`: one call with a method and JSON arguments, events back
+on a callback, pages rendered on demand so only those on screen are kept).
 
 It is the web editor's default; Settings › *Use the classic editor* goes back
 to docx-preview and contenteditable, and a build without `web/wasm/` falls
@@ -225,8 +237,12 @@ bar shows the active paragraph.
 | `crates/babel-core/src/merge.rs` | three-way merge of OOXML parts by paragraph |
 | `crates/babel-server/src/lib.rs` | the HTTP API, sign-in, events, the embedded web app |
 | `crates/babel-sync/src/lib.rs` | the sync engine |
-| `crates/babel-desktop/src/` | app start-up and local server (`app.rs`), QML bridge (`bridge.rs`), account (`sync.rs`) |
+| `crates/babel-app/src/` | the store on this computer (`lib.rs`), translations as wholes (`projects.rs`), the editing session (`session.rs`), the account (`account.rs`) |
+| `crates/babel-desktop/src/` | QML bridge (`bridge.rs`), pages as PNG files (`pages.rs`) |
 | `crates/babel-desktop/qml/` | the window: translations list, editor page, account dialog |
+| `crates/babel-mac/` | the C interface (`include/babel.h`, `src/lib.rs`) |
+| `macos/Sources/Babel/` | the Mac app: window and toolbar (`MainWindowController.swift`), menus (`AppDelegate.swift`), sidebar (`ProjectsView.swift`), editor (`EditorController.swift`, `PagesView.swift`), text view (`SegmentsController.swift`), dialogs (`Dialogs.swift`), UI test driver (`TestDriver.swift`) |
+| `packaging/macos/` | `build-app.sh` (the Mac app), `test-app.sh` (its UI tests), `build-macos.sh` (the Qt app on a Mac) |
 | `test/make-fixture.py` | builds `test/fixtures/sample.docx` |
 | `test/e2e.mjs` | browser test: edit, format, breaks, guards, headers, overflow, proofing, reload, crash recovery, download, pairing |
 | `test/sync.mjs` | two signed-in browsers: live updates and merged simultaneous edits |
@@ -254,6 +270,22 @@ a second after typing stops, and keeps versions as the web editor does
 (every few minutes of work, at the start of each session, on export, before
 a restore).
 
+Mac app (macOS 14 or later; needs Xcode's command line tools and Rust, not
+Xcode or Qt):
+
+```
+packaging/macos/build-app.sh            # target/macos/Babel.app
+packaging/macos/build-app.sh --install  # and into /Applications
+```
+
+It keeps its data in `~/Library/Application Support/Babel` (or in
+`~/.local/share/babel` when only the Qt build has been used on that Mac, so
+its translations carry over). Word documents open in it from the Finder
+(Open With), the Dock or File › Open; `Babel FILE.docx --lang=sv-SE` and
+`--project=ID` work as for the Qt app. The keys are the Mac's: ⌘ where the
+other editors use Ctrl, ⌘Return to mark done, Control-click for the menus;
+AppKit's key bindings and input methods work in the translation.
+
 Server:
 
 ```
@@ -279,6 +311,9 @@ make wasm
 (cd web && python3 -m http.server 8790) &
 node test/e2e-wasm.mjs                 # Babel's layout engine (WebAssembly)
 node test/e2e.mjs                      # the classic editor; both need Playwright and Chrome (PLAYWRIGHT_DIR, CHROME)
+
+# the Mac app: real AppKit events, its own data folder, sync against a local babel-server
+packaging/macos/build-app.sh && packaging/macos/test-app.sh
 
 # the editor against babel-server, and two devices on one account
 babel-server --db /tmp/t.db user add tester    # password testpass123

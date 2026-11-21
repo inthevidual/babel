@@ -8,7 +8,33 @@ use serde_json::{json, Value};
 use babel_core::store::{now_ms, Version};
 use babel_docx::package;
 
-use crate::app::app;
+use crate::app;
+
+/// The translations, newest first: [{id, name, fileName, targetLang, langName, updatedAt, stats}].
+pub fn list() -> Value {
+    let a = app();
+    let list = a.db(|st| st.list_projects(&a.user)).unwrap_or_default();
+    let slim: Vec<Value> = list
+        .iter()
+        .map(|p| {
+            json!({
+                "id": p["id"], "name": p["name"], "fileName": p["fileName"],
+                "targetLang": p["targetLang"], "updatedAt": p["updatedAt"], "stats": p["stats"],
+                "langName": p["targetLang"].as_str().and_then(language_name),
+            })
+        })
+        .collect();
+    Value::Array(slim)
+}
+
+/// Deletes a translation and its versions (here, and on the server with the next sync).
+pub fn delete(id: &str) -> anyhow::Result<()> {
+    let a = app();
+    let pid = id.to_owned();
+    a.db(|st| st.delete_project(&a.user, &pid))?;
+    a.state.notify(babel_server::Change { user: a.user.id, project: id.to_owned(), rev: 0, origin: None, deleted: true });
+    Ok(())
+}
 
 /// The target languages (web/js/langs.js): [{code, name, en, lt}].
 pub fn languages() -> Value {
@@ -110,6 +136,14 @@ pub fn export_name(id: &str, version_time: Option<i64>) -> String {
         .map(|t| format!("_{}", t.with_timezone(&chrono::Local).format("%Y-%m-%d-%H-%M")))
         .unwrap_or_default();
     format!("{}_{suffix}{when}.docx", meta["name"].as_str().unwrap_or("translation"))
+}
+
+/// The segment file's name for a translation ("name segments.md").
+pub fn segments_name(id: &str) -> String {
+    let a = app();
+    let pid = id.to_owned();
+    let meta = a.db(|st| st.get_project(&a.user, &pid)).unwrap_or(Value::Null);
+    format!("{} segments.md", meta["name"].as_str().unwrap_or("document"))
 }
 
 /// Versions, newest first: [{sid, time, reason, stats}].

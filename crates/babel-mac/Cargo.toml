@@ -1,0 +1,17 @@
+[package]
+name = "babel-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# Babel for macOS (macos/): babel-app behind a C interface for the Swift app.
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+anyhow = "1.0.104"
+babel-app = { version = "0.1.0", path = "../babel-app" }
+babel-editor = { version = "0.1.0", path = "../babel-editor" }
+babel-pages = { version = "0.1.0", path = "../babel-pages" }
+serde_json = "1.0.154"

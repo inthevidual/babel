@@ -1,0 +1,9 @@
+[
+{"name": "a second Mac", "expect": {"projects": 0}},
+{"signIn": ["@SERVER@", "tester", "testpass123"], "wait": 6000},
+{"name": "downloaded", "expect": {"signedIn": true, "projects": 2}},
+{"name": "opens", "project": "", "wait": 2000},
+{"name": "opens", "expect": {"editing": true}},
+{"signOut": true, "wait": 500},
+{"name": "signed out", "expect": {"signedIn": false}}
+]

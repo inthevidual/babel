@@ -2,11 +2,8 @@
 //! side on Babel's own pages (babel-editor), working on this computer and
 //! syncing with a Babel server when signed in.
 
-mod app;
 mod bridge;
-mod native;
-mod projects;
-mod sync;
+mod pages;
 
 use cxx_qt_lib::{QGuiApplication, QQmlApplicationEngine, QString, QUrl};
 
@@ -16,7 +13,7 @@ fn main() -> anyhow::Result<()> {
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,tower_http=warn".into()),
         )
         .init();
-    app::App::start()?;
+    babel_app::App::start(&babel_app::xdg_data_dir())?;
 
     let mut gui = QGuiApplication::new();
     if let Some(mut g) = gui.as_mut() {

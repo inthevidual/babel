@@ -1,0 +1,14 @@
+[
+{"name": "reopened", "project": "", "wait": 1500},
+{"name": "reopened", "expect": {"editing": true, "chars": 5538, "projects": 1}},
+{"ask": "@REPO@/test/fixtures/long.docx", "wait": 800},
+{"grab": "@OUT@/language.png", "wait": 300},
+{"name": "the language sheet starts a translation", "key": "return", "wait": 3000},
+{"name": "the language sheet starts a translation", "expect": {"projects": 2, "project": "long", "chars": 23214}},
+{"grab": "@OUT@/long.png", "wait": 300},
+{"menu": "showVersions:", "wait": 800},
+{"grab": "@OUT@/versions.png", "wait": 300},
+{"key": "return", "wait": 500},
+{"name": "the newest is first in the list", "project": "", "wait": 1500},
+{"name": "the newest is first in the list", "expect": {"project": "long"}}
+]
