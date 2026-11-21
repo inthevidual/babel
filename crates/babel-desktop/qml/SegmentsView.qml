@@ -1,3 +1,4 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls as QQC2
 import QtQuick.Layouts
@@ -23,7 +24,11 @@ Item {
     // While a row's own typing is answered: the row keeps its text and cursor.
     property bool typing: false
     property string search: ""
-    property bool onlyOpen: false
+    // Only rows not done, only rows with proofing issues (or both); remembered.
+    property bool onlyOpen: filters.onlyOpen
+    property bool onlyIssues: filters.onlyIssues
+    // Proofing issues by paragraph, as the proofer last had them: pid → count.
+    property var issues: ({})
     // Rows picked with Shift+click (a range) or Ctrl+click (one more), for the
     // actions on several rows at once: pid → true; where a range starts and ends.
     property var picked: ({})
@@ -80,6 +85,8 @@ Item {
     function matches(r) {
         if (onlyOpen && r.done)
             return false;
+        if (onlyIssues && !issues[r.pid])
+            return false;
         if (!search)
             return true;
         const q = search.toLowerCase();
@@ -108,6 +115,28 @@ Item {
         activePid = "";
         if (rows.count)
             Qt.callLater(() => focusRow(rows.get(0).pid, 0, 0));
+    }
+
+    // The proofer's latest issues. The rows shown stay (a row being fixed
+    // doesn't vanish under the cursor); rows with new issues come in, in place,
+    // when only those are shown. Changing a filter tidies up.
+    function setIssues(counts) {
+        if (JSON.stringify(counts) === JSON.stringify(issues))
+            return;
+        issues = counts;
+        if (!onlyIssues)
+            return;
+        let i = 0;
+        const m = {};
+        for (const r of all) {
+            const shown = shownAt[r.pid] !== undefined;
+            if (!shown && !matches(r))
+                continue;
+            if (!shown)
+                rows.insert(i, entry(r));
+            m[r.pid] = i++;
+        }
+        shownAt = m;
     }
 
     function reindex() {
@@ -314,6 +343,13 @@ Item {
         id: rows
     }
 
+    Settings {
+        id: filters
+        category: "segments"
+        property bool onlyOpen: false
+        property bool onlyIssues: false
+    }
+
     Timer {
         id: refilter
         interval: 200
@@ -337,11 +373,29 @@ Item {
                         refilter.restart();
                     }
                 }
+                QQC2.Label {
+                    text: "Only segments:"
+                    color: Kirigami.Theme.disabledTextColor
+                }
                 QQC2.CheckBox {
-                    text: "Only rows not done"
+                    text: "Not done"
                     checked: view.onlyOpen
+                    QQC2.ToolTip.text: "Show only the segments not marked as done"
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
                     onToggled: {
-                        view.onlyOpen = checked;
+                        filters.onlyOpen = checked;
+                        view.rebuild();
+                    }
+                }
+                QQC2.CheckBox {
+                    text: "With issues"
+                    checked: view.onlyIssues
+                    QQC2.ToolTip.text: "Show only the segments where proofing found spelling, grammar or style issues"
+                    QQC2.ToolTip.visible: hovered
+                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    onToggled: {
+                        filters.onlyIssues = checked;
                         view.rebuild();
                     }
                 }
@@ -387,6 +441,7 @@ Item {
 
                     readonly property bool active: view.activePid === pid
                     readonly property bool isPicked: !!view.picked[pid]
+                    readonly property int issueCount: view.issues[pid] || 0
                     width: ListView.view.width
                     implicitHeight: rowBox.implicitHeight + Kirigami.Units.largeSpacing * 2
                     color: isPicked ? Qt.alpha(Kirigami.Theme.highlightColor, 0.25) : active ? Qt.alpha(Kirigami.Theme.highlightColor, 0.10) : (index % 2 ? Kirigami.Theme.alternateBackgroundColor : Kirigami.Theme.backgroundColor)
@@ -435,26 +490,43 @@ Item {
                         spacing: Kirigami.Units.largeSpacing
 
                         ColumnLayout {
-                            Layout.preferredWidth: Kirigami.Units.gridUnit * 2.5
+                            Layout.preferredWidth: Kirigami.Units.gridUnit * 3.5
                             Layout.alignment: Qt.AlignTop
                             spacing: 0
-                            QQC2.Label {
-                                text: row.n
-                                color: Kirigami.Theme.disabledTextColor
-                                font: Kirigami.Theme.smallFont
+                            // The number, then done or edited and issues, on one line.
+                            RowLayout {
+                                spacing: Kirigami.Units.smallSpacing
+                                QQC2.Label {
+                                    text: row.n
+                                    color: Kirigami.Theme.disabledTextColor
+                                    font: Kirigami.Theme.smallFont
+                                }
+                                Kirigami.Icon {
+                                    visible: row.done || row.edited
+                                    implicitWidth: Kirigami.Units.iconSizes.small
+                                    implicitHeight: Kirigami.Units.iconSizes.small
+                                    source: row.done ? "checkmark" : "document-edit"
+                                    color: row.done ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.linkColor
+                                }
+                                Kirigami.Icon {
+                                    visible: row.issueCount > 0
+                                    implicitWidth: Kirigami.Units.iconSizes.small
+                                    implicitHeight: Kirigami.Units.iconSizes.small
+                                    source: "dialog-warning"
+                                    color: Kirigami.Theme.neutralTextColor
+                                    QQC2.ToolTip.text: row.issueCount === 1 ? "1 proofing issue" : row.issueCount + " proofing issues"
+                                    QQC2.ToolTip.visible: issueHover.hovered
+                                    QQC2.ToolTip.delay: Kirigami.Units.toolTipDelay
+                                    HoverHandler {
+                                        id: issueHover
+                                    }
+                                }
                             }
                             QQC2.Label {
                                 visible: row.part !== ""
                                 text: row.part
                                 color: Kirigami.Theme.disabledTextColor
                                 font: Kirigami.Theme.smallFont
-                            }
-                            Kirigami.Icon {
-                                visible: row.done || row.edited
-                                implicitWidth: Kirigami.Units.iconSizes.small
-                                implicitHeight: Kirigami.Units.iconSizes.small
-                                source: row.done ? "checkmark" : "document-edit"
-                                color: row.done ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.linkColor
                             }
                         }
 

@@ -258,6 +258,7 @@ Kirigami.Page {
         underlines = r.underlines;
         issueCount = r.count || 0;
         proofStatus = r.status || "";
+        segments.setIssues(r.pids || {});
     }
 
     function key(k, text, modifiers) {

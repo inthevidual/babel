@@ -27,6 +27,22 @@ const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 page.on('console', m => { if (m.type() === 'error' && !/favicon|404/.test(m.text())) errors.push(m.text()); });
 
+// A stand-in for LanguageTool: "felstavvat" is misspelt and every "report"
+// is a grammar issue, so which segments have issues is known (and nothing
+// goes to the real one).
+await page.route('**/v2/check', async route => {
+  const text = new URLSearchParams(route.request().postData() ?? '').get('text') ?? '';
+  const matches = [...text.matchAll(/\breport\b|\bfelstavvat\b/gi)].map(m => {
+    const typo = m[0].toLowerCase() === 'felstavvat';
+    return {
+      offset: m.index, length: m[0].length, message: 'A test issue.', shortMessage: 'Test',
+      replacements: [{ value: typo ? 'felstavat' : 'account' }],
+      rule: { id: 'TEST_RULE', issueType: typo ? 'misspelling' : 'grammar', category: { id: typo ? 'TYPOS' : 'GRAMMAR' } },
+    };
+  });
+  await route.fulfill({ contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ matches }) });
+});
+
 await page.goto(BASE);
 await page.evaluate(() => { localStorage.clear(); indexedDB.deleteDatabase('babel'); });
 await page.reload();
@@ -146,7 +162,7 @@ check(xml.includes('>This report is </w:t>') && !xml.includes('Denna'), 'Revert 
 await page.keyboard.press('Control+z');
 check((await paraXml('document:2')).includes('Denna'), 'and Ctrl+Z brings the translation back');
 
-// Spelling: a typo gets underlined (needs LanguageTool on the network).
+// Spelling: a typo gets underlined (by the stand-in LanguageTool above).
 await clickAt('document:12', 0);
 await page.keyboard.type('Ett felstavvat ord. ');
 const underlined = await page.waitForFunction(() => document.querySelectorAll('#tgtDoc .w-und.spelling').length > 0, null, { timeout: 25000 }).then(() => true, () => false);
@@ -305,6 +321,31 @@ check(stylesXml.includes('w:val="sv-SE"'), 'and is marked Swedish');
   await page.keyboard.press('Escape');
   check(await picked() === 0, 'Esc puts them down');
   await page.screenshot({ path: path.join(OUT, 'wasm-text-view.png') });
+  // Only segments with issues, not done, or both.
+  const shown = () => page.$$eval('.seg-row', r => ({
+    rows: r.length,
+    issues: r.filter(x => x.querySelector('.seg-n .issues')).length,
+    done: r.filter(x => x.classList.contains('done')).length,
+  }));
+  // Proofing checks what is edited: a typo in a row, and its mark comes.
+  await cell('document:21').click();
+  await page.keyboard.type(' felstavvat ');
+  await page.waitForSelector('.seg-row[data-pid="document:21"] .seg-n .issues', { timeout: 25000 });
+  check(true, 'a row with proofing issues gets a mark');
+  await page.check('.seg-issues');
+  let s = await shown();
+  check(s.rows > 0 && s.rows < n && s.issues === s.rows, `only segments with issues (${s.rows} of ${n})`);
+  await page.screenshot({ path: path.join(OUT, 'wasm-text-issues.png') });
+  await page.uncheck('.seg-issues');
+  await page.check('.seg-open');
+  s = await shown();
+  check(s.rows > 0 && s.rows < n && s.done === 0, `only segments not done (${s.rows} of ${n})`);
+  await page.check('.seg-issues');
+  s = await shown();
+  check(s.rows > 0 && s.issues === s.rows && s.done === 0, `both: not done and with issues (${s.rows})`);
+  await page.uncheck('.seg-issues');
+  await page.uncheck('.seg-open');
+  check((await shown()).rows === n, 'no filter: every segment again');
   // Back to the pages: drawn as the edits left them.
   await page.click('#btnView');
   await page.waitForTimeout(300);

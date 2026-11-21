@@ -183,7 +183,7 @@ export class WasmView {
     if (r.message) this.hooks.toast(r.message);
     this.applyState(r);
     if (changed) {
-      this.issues = JSON.parse(this.editor.issues());
+      this.refreshIssues();
       this.marks = JSON.parse(this.editor.marks());
       this.paint();
     } else if (this.editor.metaDirty()) {
@@ -544,9 +544,14 @@ export class WasmView {
       this.nextProof = Date.now() + 3200 + this.backoff;
     }
     if (this.closed) return;
-    this.issues = JSON.parse(this.editor.issues());
+    this.refreshIssues();
     this.paint();
     this.hooks.status?.(this.state.stats, this.state.paragraph, this.issues, this);
+  }
+
+  refreshIssues() {
+    this.issues = JSON.parse(this.editor.issues());
+    this.segments?.setIssues(this.issues);
   }
 
   showIssue(i) {
@@ -572,7 +577,7 @@ export class WasmView {
       if (b.dataset.r != null) this.answer(this.editor.applySuggestion(i.pid, i.n, i.replacements[+b.dataset.r]));
       else if (b.dataset.a === 'ignore') { this.editor.ignore(i.pid, i.n); this.flushJournal(); }
       else if (b.dataset.a === 'dict') { const w = this.editor.addToDictionary(i.pid, i.n); if (w) this.hooks.addWord?.(w); }
-      this.issues = JSON.parse(this.editor.issues());
+      this.refreshIssues();
       this.paint();
       this.focus();
     };

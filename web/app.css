@@ -355,6 +355,8 @@ body:has(.work.text-mode) .zoom, body:has(.work.text-mode) #syncToggle { display
 .seg-n i { font-style: normal; }
 .seg-n .done { color: var(--done); }
 .seg-n .edited { color: var(--edited); }
+.seg-n .issues { color: var(--warn); }
+.seg-only { color: var(--muted); font-size: 13px; }
 .seg-src, .seg-tgt { padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; tab-size: 6; }
 .seg-src { border-right: 1px solid var(--line); }
 .seg-tgt { outline: none; caret-color: var(--accent); }

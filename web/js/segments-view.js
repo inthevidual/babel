@@ -84,6 +84,16 @@ function placeOf(cell, off) {
   return [cell, cell.childNodes.length];
 }
 
+const FILTERS_KEY = 'babel.segmentFilters';
+
+function loadFilters() {
+  try { return JSON.parse(localStorage.getItem(FILTERS_KEY)) ?? {}; } catch { return {}; }
+}
+
+function saveFilters(f) {
+  try { localStorage.setItem(FILTERS_KEY, JSON.stringify(f)); } catch { /* a convenience only */ }
+}
+
 export class SegmentsView {
   constructor(view, host) {
     Object.assign(this, { view, ed: view.editor, host });
@@ -93,7 +103,12 @@ export class SegmentsView {
     this.active = null;
     this.typing = false;
     this.search = '';
-    this.onlyOpen = false;
+    // Only rows not done, only rows with proofing issues (or both); remembered in this browser.
+    const f = loadFilters();
+    this.onlyOpen = !!f.onlyOpen;
+    this.onlyIssues = !!f.onlyIssues;
+    // Proofing issues by paragraph, as the proofer last had them: pid → count.
+    this.issues = {};
     // Rows picked with Shift+click (a range) or Ctrl+click (one more), for the
     // actions on several rows at once; where a range starts and ends.
     this.picked = new Set();
@@ -181,7 +196,9 @@ export class SegmentsView {
     this.host.innerHTML = `
       <div class="seg-bar">
         <input type="search" class="seg-search" placeholder="Search the original and the translation" aria-label="Search">
-        <label class="toggle"><input type="checkbox" class="seg-open"> Only rows not done</label>
+        <span class="seg-only">Only segments:</span>
+        <label class="toggle" title="Show only the segments not marked as done"><input type="checkbox" class="seg-open"> Not done</label>
+        <label class="toggle" title="Show only the segments where proofing found spelling, grammar or style issues"><input type="checkbox" class="seg-issues"> With issues</label>
         <span class="seg-count"></span>
       </div>
       <div class="seg-body">
@@ -197,10 +214,17 @@ export class SegmentsView {
       clearTimeout(t);
       t = setTimeout(() => this.render(), 200);
     });
-    this.host.querySelector('.seg-open').addEventListener('change', e => {
-      this.onlyOpen = e.target.checked;
+    const open = this.host.querySelector('.seg-open'), issues = this.host.querySelector('.seg-issues');
+    open.checked = this.onlyOpen;
+    issues.checked = this.onlyIssues;
+    const changed = () => {
+      this.onlyOpen = open.checked;
+      this.onlyIssues = issues.checked;
+      saveFilters({ onlyOpen: this.onlyOpen, onlyIssues: this.onlyIssues });
       this.render();
-    });
+    };
+    open.addEventListener('change', changed);
+    issues.addEventListener('change', changed);
   }
 
   show() {
@@ -215,6 +239,7 @@ export class SegmentsView {
   }
 
   load() {
+    this.issues = this.view.issues?.pids ?? {};
     this.all = JSON.parse(this.ed.rows());
     this.reindex();
     this.render();
@@ -229,23 +254,51 @@ export class SegmentsView {
 
   matches(r) {
     if (this.onlyOpen && r.done) return false;
+    if (this.onlyIssues && !this.issues[r.pid]) return false;
     if (!this.search) return true;
     const q = this.search.toLowerCase();
     return textOf(r.src).toLowerCase().includes(q) || textOf(r.tgt).toLowerCase().includes(q);
+  }
+
+  // The proofer's latest issues ({underlines, count, pids}). The rows shown
+  // stay (a row being fixed doesn't vanish under the cursor); rows with new
+  // issues come in, in place, when only those are shown. Changing a filter tidies up.
+  setIssues(r) {
+    const counts = r?.pids ?? {};
+    const was = this.issues;
+    if (JSON.stringify(counts) === JSON.stringify(was)) return;
+    this.issues = counts;
+    if (this.onlyIssues) {
+      let after = null;
+      for (const row of this.all) {
+        const e = this.els.get(row.pid);
+        if (e) { after = e.row; continue; }
+        if (!this.matches(row)) continue;
+        const el = this.rowEl(row);
+        if (after) after.after(el); else this.list.prepend(el);
+        after = el;
+      }
+      this.updateCount();
+    }
+    for (const pid of new Set([...Object.keys(was), ...Object.keys(counts)])) {
+      if (was[pid] !== counts[pid] && this.els.has(pid)) this.status(this.all[this.at.get(pid)]);
+    }
+  }
+
+  updateCount() {
+    const shown = this.els.size;
+    this.count.textContent = shown === this.all.length ? `${this.all.length} segments` : `${shown} of ${this.all.length} segments`;
   }
 
   render() {
     this.list.textContent = '';
     this.els.clear();
     const frag = document.createDocumentFragment();
-    let shown = 0;
     for (const r of this.all) {
-      if (!this.matches(r)) continue;
-      frag.append(this.rowEl(r));
-      shown++;
+      if (this.matches(r)) frag.append(this.rowEl(r));
     }
     this.list.append(frag);
-    this.count.textContent = shown === this.all.length ? `${this.all.length} segments` : `${shown} of ${this.all.length} segments`;
+    this.updateCount();
     if (this.active) this.els.get(this.active)?.row.classList.add('active');
     for (const p of this.picked) this.els.get(p)?.row.classList.add('picked');
   }
@@ -307,7 +360,10 @@ export class SegmentsView {
   status(r) {
     const e = this.els.get(r.pid);
     if (!e) return;
-    e.n.innerHTML = `<span>${r.n}</span>${r.part ? `<small>${esc(r.part)}</small>` : ''}${r.done ? '<i class="done" title="Done">✓</i>' : r.edited ? '<i class="edited" title="Edited">●</i>' : ''}`;
+    const issues = this.issues[r.pid] ?? 0;
+    const marks = (r.done ? '<i class="done" title="Done">✓</i>' : r.edited ? '<i class="edited" title="Edited">●</i>' : '')
+      + (issues ? `<i class="issues" title="${issues === 1 ? '1 proofing issue' : `${issues} proofing issues`}">⚠</i>` : '');
+    e.n.innerHTML = `<span>${r.n}${marks ? ` ${marks}` : ''}</span>${r.part ? `<small>${esc(r.part)}</small>` : ''}`;
     e.row.classList.toggle('done', !!r.done);
   }
 
