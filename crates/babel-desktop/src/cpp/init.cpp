@@ -1,8 +1,6 @@
 #include "babel-desktop/init.h"
 
 #include <QtCore/QCoreApplication>
-#include <QtCore/QDir>
-#include <QtGui/QIcon>
 #include <QtGui/QImage>
 #include <QtGui/QKeyEvent>
 #include <QtGui/QMouseEvent>
@@ -13,26 +11,10 @@
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQuickControls2/QQuickStyle>
 
-// The controls' style, and on macOS the icons. On Linux, KDE's desktop style
-// and the system's icon theme. On macOS (packaging/macos/build-macos.sh) there
-// is neither: Qt's Fusion style, and the Breeze icons the app bundle carries
-// in Contents/Resources/icons. BABEL_ICONS names such a folder anywhere.
 void babel_init_style()
 {
-    QString icons = qEnvironmentVariable("BABEL_ICONS");
-#ifdef Q_OS_MACOS
-    if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
-        QQuickStyle::setStyle(QStringLiteral("Fusion"));
-    if (icons.isEmpty())
-        icons = QCoreApplication::applicationDirPath() + QStringLiteral("/../Resources/icons");
-#else
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))
         QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
-#endif
-    if (!icons.isEmpty() && QDir(icons + QStringLiteral("/breeze")).exists()) {
-        QIcon::setThemeSearchPaths(QStringList{icons} + QIcon::themeSearchPaths());
-        QIcon::setThemeName(QStringLiteral("breeze"));
-    }
 }
 
 void babel_exit_on_load_failure(QQmlApplicationEngine &engine)

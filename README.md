@@ -242,7 +242,7 @@ bar shows the active paragraph.
 | `crates/babel-desktop/qml/` | the window: translations list, editor page, account dialog |
 | `crates/babel-mac/` | the C interface (`include/babel.h`, `src/lib.rs`) |
 | `macos/Sources/Babel/` | the Mac app: window and toolbar (`MainWindowController.swift`), menus (`AppDelegate.swift`), sidebar (`ProjectsView.swift`), editor (`EditorController.swift`, `PagesView.swift`), text view (`SegmentsController.swift`), dialogs (`Dialogs.swift`), UI test driver (`TestDriver.swift`) |
-| `packaging/macos/` | `build-app.sh` (the Mac app), `test-app.sh` (its UI tests), `build-macos.sh` (the Qt app on a Mac) |
+| `packaging/macos/` | `build-app.sh` (the Mac app), `test-app.sh` (its UI tests) |
 | `test/make-fixture.py` | builds `test/fixtures/sample.docx` |
 | `test/e2e.mjs` | browser test: edit, format, breaks, guards, headers, overflow, proofing, reload, crash recovery, download, pairing |
 | `test/sync.mjs` | two signed-in browsers: live updates and merged simultaneous edits |
