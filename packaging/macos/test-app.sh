@@ -22,13 +22,19 @@ failed=0
 
 run() { # script data-dir
     local script="$OUT/$(basename "$1")"
-    sed -e "s|@REPO@|$REPO|g" -e "s|@OUT@|$OUT|g" -e "s|@SERVER@|$SERVER|g" "$1" > "$script"
+    sed -e "s|@REPO@|$REPO|g" -e "s|@OUT@|$OUT|g" -e "s|@SERVER@|$SERVER|g" -e "s|@LT@|http://127.0.0.1:$LT_PORT|g" "$1" > "$script"
     echo "== $(basename "$1")"
     local log
     log=$(BABEL_DATA_DIR="$2" BABEL_TEST_SCRIPT="$script" "$APP" 2>/dev/null | grep '^UITEST' || true)
     echo "$log" | grep -E '^UITEST (ok|FAIL)' | sed 's/^UITEST //'
     echo "$log" | grep -q '^UITEST done, 0 failed' || failed=1
 }
+
+# Proofing against a stand-in LanguageTool (macos/tests/languagetool.py).
+LT_PORT=8798
+python3 "$REPO/macos/tests/languagetool.py" $LT_PORT &
+LT_PID=$!
+trap 'kill $LT_PID 2>/dev/null || true' EXIT
 
 run "$REPO/macos/tests/editing.json" "$OUT/data"
 run "$REPO/macos/tests/projects.json" "$OUT/data"
@@ -37,7 +43,7 @@ run "$REPO/macos/tests/projects.json" "$OUT/data"
 echo testpass123 | "$REPO/target/release/babel-server" --db "$OUT/server.db" user add tester >/dev/null
 "$REPO/target/release/babel-server" --db "$OUT/server.db" serve --listen "127.0.0.1:$PORT" >"$OUT/server.log" 2>&1 &
 SERVER_PID=$!
-trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
+trap 'kill $SERVER_PID $LT_PID 2>/dev/null || true' EXIT
 sleep 1
 run "$REPO/macos/tests/sync.json" "$OUT/data"
 run "$REPO/macos/tests/sync-second.json" "$OUT/data2"

@@ -506,12 +506,17 @@ impl Editor {
         }
     }
 
-    /// Underlines for every proofing issue: {underlines: [{page, x, y, w, kind}], count, status}.
+    /// Underlines for every proofing issue, and how many each paragraph has:
+    /// {underlines: [{page, x, y, w, kind}], count, pids: {pid: n}, status}.
     pub fn issues(&self) -> Value {
         let mut out = vec![];
         let mut count = 0;
+        let mut pids = serde_json::Map::new();
         for (pid, list) in &self.proof.issues {
             let Some(p) = self.session.locate(pid) else { continue };
+            if !list.is_empty() {
+                pids.insert(pid.clone(), json!(list.len()));
+            }
             for i in list {
                 count += 1;
                 let a = Pos::new(p.story, p.path.clone(), i.a);
@@ -521,7 +526,7 @@ impl Editor {
                 }
             }
         }
-        json!({ "underlines": out, "count": count, "status": self.proof.status })
+        json!({ "underlines": out, "count": count, "pids": pids, "status": self.proof.status })
     }
 
     // ── After edits ───────────────────────────────────────────────────────

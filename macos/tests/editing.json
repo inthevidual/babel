@@ -1,4 +1,5 @@
 [
+{"settings": {"proof": true, "endpoint": "@LT@"}},
 {"open": "@REPO@/test/fixtures/sample.docx", "lang": "sv-SE", "wait": 2000},
 {"textView": false, "menu": "actualSize:", "wait": 800},
 {"name": "opened", "expect": {"editing": true, "project": "sample", "projects": 1}},
@@ -35,6 +36,15 @@
 {"grab": "@OUT@/text-zoomed.png", "wait": 300},
 {"name": "zoom in the text view", "menu": "actualSize:", "wait": 300},
 {"name": "zoom in the text view", "expect": {"textZoom": 1}},
+{"name": "only segments with issues", "onlyOpen": false, "onlyIssues": true, "wait": 500},
+{"name": "only segments with issues", "expect": {"rowsFiltered": true, "allWithIssues": true}},
+{"grab": "@OUT@/text-issues.png", "wait": 300},
+{"name": "only segments not done", "onlyOpen": true, "onlyIssues": false, "wait": 400},
+{"name": "only segments not done", "expect": {"rowsFiltered": true, "rowsDone": 0}},
+{"name": "both filters", "onlyOpen": true, "onlyIssues": true, "wait": 400},
+{"name": "both filters", "expect": {"rowsFiltered": true, "allWithIssues": true, "rowsDone": 0}},
+{"name": "no filter", "onlyOpen": false, "onlyIssues": false, "wait": 400},
+{"name": "no filter", "expect": {"rowsFiltered": false}},
 {"name": "back to the pages", "textView": false, "wait": 1500},
 {"name": "back to the pages", "expect": {"textView": false, "firstResponder": "PagesView", "unsaved": false}},
 {"export": "@OUT@/sample_SV.docx", "wait": 500}

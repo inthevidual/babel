@@ -43,6 +43,11 @@ enum TestDriver {
         at += 1
         var delay = 0.15
         if s.has("wait") { delay = s.num("wait") / 1000 }
+        if let set = s.obj("settings") {
+            var all = Core.object("settings") ?? [:]
+            all.merge(set) { $1 }
+            Core.call("setSettings", all)
+        }
         if s.has("open") {
             AppModel.shared.make(original: URL(fileURLWithPath: s.str("open")), translated: nil, lang: s.has("lang") ? s.str("lang") : "sv-SE")
         }
@@ -57,6 +62,9 @@ enum TestDriver {
         }
         if s.has("key") { namedKey(s.str("key"), mods: mods(s)) }
         if s.has("textView") { editor?.setTextView(s.bool("textView")) }
+        if s.has("onlyOpen") || s.has("onlyIssues") {
+            editor?.segments.setFilters(open: s.has("onlyOpen") ? s.bool("onlyOpen") : nil, issues: s.has("onlyIssues") ? s.bool("onlyIssues") : nil)
+        }
         if s.has("menu") { NSApp.sendAction(NSSelectorFromString(s.str("menu")), to: nil, from: nil) }
         if s.has("grab") { grab(s.str("grab")) }
         if s.has("export") { AppModel.report(Core.object("export", ["id": AppModel.shared.selection ?? "", "path": s.str("export")])) }
@@ -150,7 +158,7 @@ enum TestDriver {
 
     private static func state() -> JSON {
         guard let e = editor else { return [:] }
-        return [
+        var st: JSON = [
             "editing": e.editing,
             "project": e.projectName,
             "caret": e.caret.map { ["page": $0.page, "x": Int($0.x)] } ?? NSNull(),
@@ -170,7 +178,10 @@ enum TestDriver {
             "syncStatus": AppModel.shared.syncStatus,
             "frame": NSStringFromRect(wc?.window?.frame ?? .zero),
             "firstResponder": String(describing: type(of: wc?.window?.firstResponder ?? NSObject())),
+            "issues": e.issueCount,
         ]
+        st.merge(e.segments.filterState) { $1 }
+        return st
     }
 
     private static func stateJSON() -> String {
@@ -187,6 +198,8 @@ enum TestDriver {
             case "sourceStarts": ok = (st["sourceSelected"] as? String ?? "").hasPrefix(v as? String ?? "\u{0}")
             case "selectedSome": ok = !(st["selected"] as? String ?? "").isEmpty == (v as? Bool ?? false)
             case "charsBelow": ok = (st["chars"] as? Int ?? 0) < (v as? Int ?? 0)
+            case "rowsFiltered": ok = ((st["rows"] as? Int ?? 0) < (st["rowsAll"] as? Int ?? 0)) == (v as? Bool ?? false)
+            case "allWithIssues": ok = ((st["rows"] as? Int ?? 0) > 0 && st["rows"] as? Int == st["rowsWithIssues"] as? Int) == (v as? Bool ?? false)
             case "charsAbove": ok = (st["chars"] as? Int ?? 0) > (v as? Int ?? 0)
             default: ok = (st[k] as? NSObject)?.isEqual(v) ?? (v is NSNull)
             }

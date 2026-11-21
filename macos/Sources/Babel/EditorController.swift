@@ -65,7 +65,7 @@ final class EditorController: NSViewController, NSMenuItemValidation {
     private let sourceScroll = NSScrollView()
     private let targetScroll = NSScrollView()
     private let pagesSplit = NSSplitView()
-    private let segments = SegmentsController()
+    let segments = SegmentsController()
     private let placeholder: NSHostingView<EditorPlaceholder> = {
         let v = NSHostingView(rootView: EditorPlaceholder(model: AppModel.shared))
         v.sizingOptions = []
@@ -321,6 +321,7 @@ final class EditorController: NSViewController, NSMenuItemValidation {
         underlines = PageRect.list(r.arr("underlines"))
         issueCount = r.int("count")
         proofStatus = r.str("status")
+        segments.setIssues((r.obj("pids") ?? [:]).compactMapValues { ($0 as? NSNumber)?.intValue })
         target.needsDisplay = true
         updateStatus()
     }

@@ -112,11 +112,14 @@ final class SegmentsController: NSViewController {
     private var typing = false
     private var placing = false
     private var heights: [String: (CGFloat, CGFloat)] = [:]
+    /// Proofing issues by paragraph, as the proofer last had them.
+    private var issues: [String: Int] = [:]
 
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let search = NSSearchField()
-    private let onlyOpen = NSButton(checkboxWithTitle: "Only segments not done", target: nil, action: nil)
+    private let onlyOpen = NSButton(checkboxWithTitle: "Not done", target: nil, action: nil)
+    private let onlyIssues = NSButton(checkboxWithTitle: "With issues", target: nil, action: nil)
     private let count = NSTextField(labelWithString: "")
     let panel = SegmentsPanel()
 
@@ -129,19 +132,26 @@ final class SegmentsController: NSViewController {
         search.target = self
         search.action = #selector(filterChanged(_:))
         search.sendsSearchStringImmediately = false
-        onlyOpen.target = self
-        onlyOpen.action = #selector(filterChanged(_:))
+        let only = NSTextField(labelWithString: "Only segments:")
+        only.textColor = .secondaryLabelColor
+        for (box, key) in [(onlyOpen, "onlyOpen"), (onlyIssues, "onlyIssues")] {
+            box.target = self
+            box.action = #selector(filterChanged(_:))
+            box.state = UserDefaults.standard.bool(forKey: key) ? .on : .off
+        }
+        onlyOpen.toolTip = "Show only the segments not marked as done"
+        onlyIssues.toolTip = "Show only the segments where proofing found spelling, grammar or style issues"
         count.textColor = .secondaryLabelColor
         count.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        let bar = NSStackView(views: [search, onlyOpen, NSView(), count])
+        let bar = NSStackView(views: [search, only, onlyOpen, onlyIssues, NSView(), count])
         bar.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         bar.spacing = 12
         search.widthAnchor.constraint(equalToConstant: 280).isActive = true
 
         numberCol.title = ""
-        numberCol.width = 44
-        numberCol.minWidth = 44
-        numberCol.maxWidth = 44
+        numberCol.width = 64
+        numberCol.minWidth = 64
+        numberCol.maxWidth = 64
         numberCol.resizingMask = []
         srcCol.title = "Original"
         tgtCol.title = "Translation"
@@ -205,6 +215,7 @@ final class SegmentsController: NSViewController {
 
     func clear() {
         all = []
+        issues = [:]
         shown = []
         at = [:]
         shownAt = [:]
@@ -219,6 +230,7 @@ final class SegmentsController: NSViewController {
 
     private func matches(_ r: Row) -> Bool {
         if onlyOpen.state == .on && r.done { return false }
+        if onlyIssues.state == .on && issues[r.pid] == nil { return false }
         let q = search.stringValue.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return true }
         return Row.text(r.src).localizedCaseInsensitiveContains(q) || Row.text(r.tgt).localizedCaseInsensitiveContains(q)
@@ -228,11 +240,56 @@ final class SegmentsController: NSViewController {
         shown = all.filter(matches)
         shownAt = Dictionary(uniqueKeysWithValues: shown.enumerated().map { ($1.pid, $0) })
         table.reloadData()
-        count.stringValue = shown.count == all.count ? "\(all.count) segments" : "\(shown.count) of \(all.count) segments"
+        updateCount()
     }
 
     @objc private func filterChanged(_ sender: Any?) {
+        UserDefaults.standard.set(onlyOpen.state == .on, forKey: "onlyOpen")
+        UserDefaults.standard.set(onlyIssues.state == .on, forKey: "onlyIssues")
         rebuild()
+    }
+
+    /// The proofer's latest issues ({pid: count}). The rows shown stay (a row
+    /// being fixed doesn't vanish under the cursor); rows with new issues are
+    /// added when only those are shown. Toggling the filter tidies up.
+    func setIssues(_ counts: [String: Int]) {
+        guard counts != issues else { return }
+        let was = issues
+        issues = counts
+        if onlyIssues.state == .on {
+            let add = all.filter { shownAt[$0.pid] == nil && matches($0) }
+            if !add.isEmpty {
+                let keep = Set(shown.map(\.pid)).union(add.map(\.pid))
+                let before = shown.map(\.pid)
+                shown = all.filter { keep.contains($0.pid) }
+                shownAt = Dictionary(uniqueKeysWithValues: shown.enumerated().map { ($1.pid, $0) })
+                // Inserted in place, so a row being edited keeps its field and cursor.
+                let old = Set(before)
+                table.insertRows(at: IndexSet(shown.indices.filter { !old.contains(shown[$0].pid) }), withAnimation: [])
+                updateCount()
+            }
+        }
+        for pid in Set(was.keys).union(counts.keys) where was[pid] != counts[pid] {
+            if let i = shownAt[pid], let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? NumberCell {
+                cell.show(shown[i], issues: counts[pid] ?? 0)
+            }
+        }
+    }
+
+    /// For the UI tests: the filters, and what they show.
+    func setFilters(open: Bool?, issues on: Bool?) {
+        if let open { onlyOpen.state = open ? .on : .off }
+        if let on { onlyIssues.state = on ? .on : .off }
+        filterChanged(nil)
+    }
+
+    var filterState: JSON {
+        ["rows": shown.count, "rowsAll": all.count,
+         "rowsDone": shown.filter(\.done).count, "rowsWithIssues": shown.filter { issues[$0.pid] != nil }.count]
+    }
+
+    private func updateCount() {
+        count.stringValue = shown.count == all.count ? "\(all.count) segments" : "\(shown.count) of \(all.count) segments"
     }
 
     func focusSearch() {
@@ -304,7 +361,7 @@ final class SegmentsController: NSViewController {
     /// input method stay as they are).
     private func refreshCells(_ i: Int) {
         let row = shown[i]
-        if let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? NumberCell { cell.show(row) }
+        if let cell = table.view(atColumn: 0, row: i, makeIfNecessary: false) as? NumberCell { cell.show(row, issues: issues[row.pid] ?? 0) }
         if let cell = table.view(atColumn: 1, row: i, makeIfNecessary: false) as? TextCell { cell.show(row.src) }
         if let cell = table.view(atColumn: 2, row: i, makeIfNecessary: false) as? TextCell {
             let tv = cell.textView
@@ -658,7 +715,7 @@ extension SegmentsController: NSTableViewDataSource, NSTableViewDelegate {
         case "n":
             let cell = tableView.makeView(withIdentifier: column.identifier, owner: nil) as? NumberCell ?? NumberCell()
             cell.identifier = column.identifier
-            cell.show(r)
+            cell.show(r, issues: issues[r.pid] ?? 0)
             return cell
         default:
             let isTarget = column.identifier.rawValue == "tgt"
@@ -703,6 +760,7 @@ final class NumberCell: NSTableCellView {
     private let number = NSTextField(labelWithString: "")
     private let part = NSTextField(labelWithString: "")
     private let icon = NSImageView()
+    private let warning = NSImageView()
 
     init() {
         super.init(frame: .zero)
@@ -710,7 +768,15 @@ final class NumberCell: NSTableCellView {
             l.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
             l.textColor = .secondaryLabelColor
         }
-        let stack = NSStackView(views: [number, part, icon])
+        warning.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Issues")
+        warning.contentTintColor = .systemOrange
+        for v in [icon, warning] {
+            v.symbolConfiguration = .init(pointSize: NSFont.smallSystemFontSize, weight: .regular)
+        }
+        // The number, then done or edited and issues, on one line: a one-line row has room for no more.
+        let line = NSStackView(views: [number, icon, warning])
+        line.spacing = 3
+        let stack = NSStackView(views: [line, part])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
@@ -724,13 +790,15 @@ final class NumberCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(_ r: Row) {
+    func show(_ r: Row, issues: Int) {
         number.stringValue = "\(r.n)"
         part.stringValue = r.part
         part.isHidden = r.part.isEmpty
         icon.isHidden = !(r.done || r.edited)
         icon.image = NSImage(systemSymbolName: r.done ? "checkmark.circle.fill" : "pencil", accessibilityDescription: r.done ? "Done" : "Edited")
         icon.contentTintColor = r.done ? .systemGreen : .linkColor
+        warning.isHidden = issues == 0
+        warning.toolTip = issues == 1 ? "1 proofing issue" : "\(issues) proofing issues"
     }
 }
 
