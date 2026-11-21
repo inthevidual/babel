@@ -118,6 +118,10 @@ struct Snapshot {
     caret: Pos,
     /// Typing continues this step while it goes on at `caret_after`.
     typing: Option<(Instant, Pos)>,
+    /// Undone and redone with the step before it (edits of several paragraphs
+    /// as one step: on the undo stack, joined to the one below; on the redo
+    /// stack, the one below is redone with it).
+    joined: bool,
 }
 
 pub struct Session {
@@ -537,6 +541,20 @@ impl Session {
         r
     }
 
+    /// Where the undo history is now: edits after it can be joined into one
+    /// step with [`Session::join_since`].
+    pub fn undo_mark(&self) -> usize {
+        self.undo.len()
+    }
+
+    /// The steps since `mark` (edits of several paragraphs) undone and redone
+    /// as one.
+    pub fn join_since(&mut self, mark: usize) {
+        for s in self.undo.iter_mut().skip(mark + 1) {
+            s.joined = true;
+        }
+    }
+
     /// Toggles bold, italic or underline over a range of one paragraph
     /// (off if the start of the range has it, else on).
     pub fn toggle(&mut self, a: &Pos, b: &Pos, style: Style) -> Result<Vec<usize>, EditError> {
@@ -614,7 +632,7 @@ impl Session {
         let range = self.range_of(&para.part, &para.pid).ok_or(EditError::NotEditable)?;
         let xml = &self.parts[&para.part];
         let wc = self.doc.para(pos.story, &pos.path).ok_or(EditError::NotEditable)?.clone();
-        Ok(Snapshot { pid: para.pid.clone(), story: pos.story, path: pos.path.clone(), xml: xml[range].to_owned(), para, wc, caret: pos.clone(), typing: None })
+        Ok(Snapshot { pid: para.pid.clone(), story: pos.story, path: pos.path.clone(), xml: xml[range].to_owned(), para, wc, caret: pos.clone(), typing: None, joined: false })
     }
 
     fn record(&mut self, snap: Snapshot, typing: bool, after: &Pos) {
@@ -661,24 +679,52 @@ impl Session {
         Ok((current, self.relayout()))
     }
 
-    /// Undoes the last edit; returns the caret and the pages to draw again.
+    /// Undoes the last edit (a step of several paragraphs whole); returns the
+    /// caret (the first paragraph's) and the pages to draw again.
     pub fn undo(&mut self) -> Option<Result<(Pos, Vec<usize>), EditError>> {
-        let snap = self.undo.pop()?;
-        let caret = snap.caret.clone();
-        Some(self.restore(snap).map(|(current, pages)| {
-            self.redo.push(current);
-            (caret, pages)
-        }))
+        self.history_step(true)
     }
 
     pub fn redo(&mut self) -> Option<Result<(Pos, Vec<usize>), EditError>> {
-        let snap = self.redo.pop()?;
-        let caret = snap.caret.clone();
-        Some(self.restore(snap).map(|(mut current, pages)| {
-            current.typing = None;
-            self.undo.push(current);
-            (caret, pages)
-        }))
+        self.history_step(false)
+    }
+
+    fn history_step(&mut self, undo: bool) -> Option<Result<(Pos, Vec<usize>), EditError>> {
+        let (mut all_pages, mut caret, mut first) = (vec![], None, true);
+        loop {
+            let from = if undo { &mut self.undo } else { &mut self.redo };
+            let Some(snap) = from.pop() else { break };
+            // Undoing: go on while this one is joined to the one below. Redoing:
+            // while the one below is to be redone with it.
+            let more = if undo { snap.joined } else { from.last().is_some_and(|s| s.joined) };
+            // The caret at the first paragraph: undo ends there, redo starts there.
+            if undo || caret.is_none() {
+                caret = Some(snap.caret.clone());
+            }
+            match self.restore(snap) {
+                Ok((mut current, pages)) => {
+                    all_pages.extend(pages);
+                    if undo {
+                        // On the redo stack it goes with the one pushed after it
+                        // (redone before it).
+                        current.joined = more;
+                    } else {
+                        current.typing = None;
+                        current.joined = !first;
+                    }
+                    if undo { self.redo.push(current) } else { self.undo.push(current) }
+                }
+                Err(e) => return Some(Err(e)),
+            }
+            first = false;
+            if !more {
+                break;
+            }
+        }
+        let caret = caret?;
+        all_pages.sort_unstable();
+        all_pages.dedup();
+        Some(Ok((caret, all_pages)))
     }
 
     pub fn can_undo(&self) -> bool {

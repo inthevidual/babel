@@ -914,21 +914,136 @@ impl Editor {
     /// Puts the original's paragraph back in place of the translation's (undoable).
     pub fn revert_paragraph(&mut self) -> Value {
         let Some(pos) = self.caret.clone() else { return self.state() };
-        let res = (|| {
-            let pid = self.pid_at(&pos).ok_or("This paragraph can't be reverted.")?;
-            let path = self.meta.get(&pid).map(|m| m.path.clone()).ok_or("This paragraph can't be reverted.")?;
-            let xml = self.source_parts.get(&path).ok_or("The original is missing.")?;
-            let range = find_paragraph(xml, &pid).ok_or("The original paragraph is missing.")?;
-            let src = xml[range].to_owned();
-            let pages = self.session.rewrite_paragraph(&pos, &src, Parts::new()).map_err(|e| e.to_string())?;
-            self.edited(pages);
-            Ok::<_, String>(())
-        })();
+        let res = self.revert_at(&pos);
         self.caret = Some(Pos::new(pos.story, pos.path.clone(), 0));
         self.anchor = self.caret.clone();
         let mut v = self.state();
         if let Err(e) = res {
             v["error"] = json!(e);
+        }
+        v
+    }
+
+    fn revert_at(&mut self, pos: &Pos) -> Result<(), String> {
+        let pid = self.pid_at(pos).ok_or("This paragraph can't be reverted.")?;
+        let path = self.meta.get(&pid).map(|m| m.path.clone()).ok_or("This paragraph can't be reverted.")?;
+        let xml = self.source_parts.get(&path).ok_or("The original is missing.")?;
+        let range = find_paragraph(xml, &pid).ok_or("The original paragraph is missing.")?;
+        let src = xml[range].to_owned();
+        let pages = self.session.rewrite_paragraph(pos, &src, Parts::new()).map_err(|e| e.to_string())?;
+        self.edited(pages);
+        Ok(())
+    }
+
+    // ── Several paragraphs at once (rows picked in the text view) ─────────
+
+    /// Does `f` for each of the paragraphs `pids` (at its start), all of it one
+    /// step of undo; then the caret is at the first. Returns how many it did,
+    /// and the errors and notes by row number.
+    fn each_paragraph(&mut self, pids: &[String], mut f: impl FnMut(&mut Self, &str) -> Result<Option<String>, String>) -> (usize, Vec<(usize, String)>, Vec<(usize, String)>) {
+        let mark = self.session.undo_mark();
+        let (mut did, mut errors, mut notes) = (0, vec![], vec![]);
+        for pid in pids {
+            let Some(pos) = self.session.locate(pid) else { continue };
+            let n = self.row_n.get(pid).copied().unwrap_or(0);
+            self.caret = Some(Pos::new(pos.story, pos.path.clone(), 0));
+            self.anchor = self.caret.clone();
+            match f(self, pid) {
+                Ok(note) => {
+                    did += 1;
+                    if let Some(note) = note {
+                        notes.push((n, note));
+                    }
+                }
+                Err(e) => errors.push((n, e)),
+            }
+        }
+        self.session.join_since(mark);
+        if let Some(pos) = pids.first().and_then(|p| self.session.locate(p)) {
+            self.caret = Some(Pos::new(pos.story, pos.path.clone(), 0));
+            self.anchor = self.caret.clone();
+        }
+        (did, errors, notes)
+    }
+
+    /// "Segments 3, 5 and 9".
+    fn rows_named(list: &[(usize, String)]) -> String {
+        let ns: Vec<String> = list.iter().filter(|(n, _)| *n > 0).map(|(n, _)| n.to_string()).collect();
+        match ns.len() {
+            0 => String::new(),
+            1 => format!("segment {}", ns[0]),
+            k => format!("segments {} and {}", ns[..k - 1].join(", "), ns[k - 1]),
+        }
+    }
+
+    /// An action on several rows: "claude", "done", "undone" or "revert".
+    pub fn rows_action(&mut self, action: &str, pids: &[String]) -> Value {
+        match action {
+            "claude" => self.insert_claude_rows(pids),
+            "done" | "undone" => self.set_done_rows(pids, action == "done"),
+            "revert" => self.revert_rows(pids),
+            _ => {
+                let mut v = self.state();
+                v["error"] = json!(format!("Unknown action {action}."));
+                v
+            }
+        }
+    }
+
+    /// Claude's translation in each of the paragraphs `pids` that it has (one
+    /// step of undo).
+    pub fn insert_claude_rows(&mut self, pids: &[String]) -> Value {
+        if self.claude.is_none() {
+            let mut v = self.state();
+            v["error"] = json!("No translation by Claude is attached to this document.");
+            return v;
+        }
+        let has: Vec<String> = pids.iter().filter(|p| self.claude.as_ref().is_some_and(|c| c.by_pid.contains_key(*p))).cloned().collect();
+        let without = pids.len() - has.len();
+        let (did, errors, notes) = self.each_paragraph(&has, |e, _| e.insert_claude_inner());
+        let mut msg = format!("Inserted Claude's translation in {did} of {} segments.", pids.len());
+        if without > 0 {
+            msg += &format!(" {without} have none in Claude's translation.");
+        }
+        if !notes.is_empty() {
+            msg += &format!(" Check {}: the marks, tabs or links may not have lined up.", Self::rows_named(&notes));
+        }
+        if !errors.is_empty() {
+            msg += &format!(" Couldn't insert in {}: {}", Self::rows_named(&errors), errors[0].1);
+        }
+        let mut v = self.state();
+        if did == 0 && !errors.is_empty() {
+            v["error"] = json!(msg);
+        } else {
+            v["message"] = json!(msg);
+        }
+        v
+    }
+
+    /// Marks the paragraphs `pids` done, or not done.
+    pub fn set_done_rows(&mut self, pids: &[String], done: bool) -> Value {
+        for pid in pids {
+            if !self.meta.contains_key(pid) {
+                continue;
+            }
+            let changed = if done { self.confirmed.insert(pid.clone()) } else { self.confirmed.remove(pid) };
+            if changed {
+                self.row_changes.insert(pid.clone());
+                self.meta_dirty = true;
+            }
+        }
+        self.state()
+    }
+
+    /// The original's text back in each of the paragraphs `pids` (one step of undo).
+    pub fn revert_rows(&mut self, pids: &[String]) -> Value {
+        let (did, errors, _) = self.each_paragraph(pids, |e, _| {
+            let pos = e.caret.clone().ok_or("The paragraph is missing.")?;
+            e.revert_at(&pos).map(|_| None)
+        });
+        let mut v = self.state();
+        if !errors.is_empty() {
+            v["error"] = json!(format!("Reverted {did} of {} segments. Couldn't revert {}: {}", pids.len(), Self::rows_named(&errors), errors[0].1));
         }
         v
     }

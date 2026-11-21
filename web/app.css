@@ -348,6 +348,8 @@ body:has(.work.text-mode) .zoom, body:has(.work.text-mode) #syncToggle { display
 .seg-row { display: grid; grid-template-columns: 3.4rem 1fr 1fr; border-bottom: 1px solid var(--line); content-visibility: auto; contain-intrinsic-size: auto 3rem; }
 .seg-row:nth-child(even) { background: color-mix(in srgb, var(--fg) 2.5%, transparent); }
 .seg-row.active { background: var(--active); box-shadow: inset 3px 0 0 var(--accent); }
+.seg-row.picked { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.seg-row.picked ::selection { background: transparent; }
 .seg-n { padding: 10px 6px 10px 10px; color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
 .seg-n small { font-size: 11px; }
 .seg-n i { font-style: normal; }

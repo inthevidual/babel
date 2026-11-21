@@ -1,0 +1,216 @@
+[
+{
+"wait": 1500
+},
+{
+"name": "the text view",
+"textView": true,
+"wait": 1500
+},
+{
+"name": "attach",
+"attach": "/home/jesper/claude/babel/test/ui/claude-sample.md",
+"wait": 800
+},
+{
+"name": "a click in a row",
+"clickRow": "document:2",
+"wait": 400
+},
+{
+"name": "a click in a row",
+"expect": {
+"activePid": "document:2",
+"picked": 0
+}
+},
+{
+"name": "shift+click picks the rows between",
+"clickRow": "document:10",
+"mods": 33554432,
+"wait": 400
+},
+{
+"name": "shift+click picks the rows between",
+"expect": {
+"activePid": "document:2",
+"picked": 9
+}
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/rows-picked.png"
+},
+{
+"name": "ctrl+click one more",
+"clickRow": "document:12",
+"mods": 67108864,
+"wait": 300
+},
+{
+"name": "ctrl+click one more",
+"expect": {
+"picked": 10
+}
+},
+{
+"name": "ctrl+click it again: one less",
+"clickRow": "document:12",
+"mods": 67108864,
+"wait": 300
+},
+{
+"name": "ctrl+click it again: one less",
+"expect": {
+"picked": 9
+}
+},
+{
+"name": "ctrl+1 inserts Claude's translation in them all",
+"key": 49,
+"text": "1",
+"mods": 67108864,
+"wait": 900
+},
+{
+"name": "ctrl+1 inserts Claude's translation in them all",
+"expect": {
+"rowHtmlHas": [
+"document:10",
+"En fotnot följer",
+true
+],
+"rowStarts": "Denna rapport",
+"picked": 9
+}
+},
+{
+"name": "one undo takes back both",
+"key": 90,
+"mods": 67108864,
+"wait": 700
+},
+{
+"name": "one undo takes back both",
+"expect": {
+"rowHtmlHas": [
+"document:10",
+"En fotnot följer",
+false
+],
+"rowStarts": "This report"
+}
+},
+{
+"name": "redo puts both back",
+"key": 89,
+"mods": 67108864,
+"wait": 700
+},
+{
+"name": "redo puts both back",
+"expect": {
+"rowHtmlHas": [
+"document:10",
+"En fotnot följer",
+true
+],
+"rowStarts": "Denna rapport"
+}
+},
+{
+"name": "ctrl+enter marks them all done",
+"key": 16777220,
+"mods": 67108864,
+"wait": 600
+},
+{
+"name": "ctrl+enter marks them all done",
+"expect": {
+"done": 9
+}
+},
+{
+"name": "right-click on picked rows: their menu",
+"rightClickRow": "document:5",
+"wait": 500
+},
+{
+"grab": "/home/jesper/claude/babel/target/test-run/rows-menu.png"
+},
+{
+"name": "escape closes the menu",
+"key": 16777216,
+"wait": 300
+},
+{
+"name": "escape puts the rows down",
+"key": 16777216,
+"wait": 300
+},
+{
+"name": "escape puts the rows down",
+"expect": {
+"picked": 0
+}
+},
+{
+"name": "shift+down at a row's end picks rows",
+"selectRow": [
+"document:3",
+999
+],
+"wait": 300
+},
+{
+"key": 16777237,
+"mods": 33554432,
+"wait": 200
+},
+{
+"key": 16777237,
+"mods": 33554432,
+"wait": 300
+},
+{
+"name": "shift+down at a row's end picks rows",
+"expect": {
+"picked": 3,
+"activePid": "document:3"
+}
+},
+{
+"name": "the menu's action on them: not done",
+"rowsAction": "undone",
+"wait": 500
+},
+{
+"name": "the menu's action on them: not done",
+"expect": {
+"done": 6
+}
+},
+{
+"name": "a plain click puts them down",
+"clickRow": "document:15",
+"wait": 400
+},
+{
+"name": "a plain click puts them down",
+"expect": {
+"picked": 0,
+"activePid": "document:15"
+}
+},
+{
+"name": "shift+click in the same row selects text, as before",
+"clickRow": "document:15",
+"mods": 33554432,
+"wait": 300
+},
+{
+"name": "shift+click in the same row selects text, as before",
+"expect": {
+"picked": 0
+}
+}
+]

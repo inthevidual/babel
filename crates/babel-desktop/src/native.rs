@@ -346,6 +346,12 @@ pub fn insert_claude() -> Value {
     with(|s| { let v = s.editor.insert_claude(); s.answer(v) }, Value::Null)
 }
 
+/// An action on several rows picked in the text view (`pids`: a JSON list).
+pub fn rows_action(action: &str, pids: &str) -> Value {
+    let pids: Vec<String> = serde_json::from_str(pids).unwrap_or_default();
+    with(|s| { let v = s.editor.rows_action(action, &pids); s.answer(v) }, Value::Null)
+}
+
 /// Attaches the segment file at `path` to the open translation.
 pub fn attach_claude(path: &std::path::Path) -> Value {
     with(

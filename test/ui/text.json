@@ -5,7 +5,7 @@
 {
 "name": "the text view",
 "textView": true,
-"wait": 1500
+"wait": 3000
 },
 {
 "name": "the text view",

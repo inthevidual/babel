@@ -277,6 +277,33 @@ check(stylesXml.includes('w:val="sv-SE"'), 'and is marked Swedish');
   await page.waitForTimeout(150);
   check((await cellText('document:10')).startsWith('En fotnot följer efter denna mening.①'), 'Ctrl+1 inserts Claude’s translation, the chip in its place');
   check(await page.$eval('.seg-claude', e => e.textContent.startsWith('En fotnot')), 'the panel shows Claude’s translation of the row');
+  // Several rows: Shift+click picks a range, Ctrl+1 inserts Claude's translation in them all.
+  await cell('document:2').click();
+  await cell('document:10').click({ modifiers: ['Shift'] });
+  const picked = () => page.$$eval('.seg-row.picked', r => r.length);
+  check(await picked() === 9 && (await page.$eval('.seg-side h3', e => e.textContent)) === '9 segments picked', `Shift+click picks the rows between (${await picked()})`);
+  await cell('document:12').click({ modifiers: ['Control'] });
+  check(await picked() === 10, 'Ctrl+click picks one more');
+  await cell('document:12').click({ modifiers: ['Control'] });
+  check(await picked() === 9, 'and again, one less');
+  await page.screenshot({ path: path.join(OUT, 'wasm-rows-picked.png') });
+  // Both rows with Claude's translation in them already: back to the original, then Claude's again.
+  await page.click('.seg-side button[data-act="revert"]');
+  await page.waitForTimeout(150);
+  check((await cellText('document:2')).startsWith('This report') && (await cellText('document:10')).startsWith('A footnote'), 'the panel reverts the picked rows');
+  await cell('document:2').focus();
+  await page.keyboard.press('Control+1');
+  await page.waitForTimeout(150);
+  check((await cellText('document:2')).startsWith('Denna rapport') && (await cellText('document:10')).startsWith('En fotnot'), 'Ctrl+1 inserts Claude’s translation in the picked rows');
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(150);
+  check((await cellText('document:2')).startsWith('This report') && (await cellText('document:10')).startsWith('A footnote'), 'one Ctrl+Z takes both back');
+  await cell('document:5').click({ button: 'right' });
+  const items = await page.$$eval('.menu.ctx .menu-item', b => b.map(x => x.textContent.trim()));
+  check(items.some(t => t.startsWith('Mark 9 as done')), `a right-click on picked rows: their menu (${items.join(' / ')})`);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  check(await picked() === 0, 'Esc puts them down');
   await page.screenshot({ path: path.join(OUT, 'wasm-text-view.png') });
   // Back to the pages: drawn as the edits left them.
   await page.click('#btnView');

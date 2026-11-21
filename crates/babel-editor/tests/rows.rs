@@ -165,3 +165,48 @@ fn listing_rows_changes_nothing() {
     e.take_row_changes();
     assert_eq!(e.stats(), before);
 }
+
+#[test]
+fn picked_rows_take_claude_done_and_revert_together() {
+    let mut e = editor();
+    e.rows();
+    let md = "## 1\n> This report is **confidential** and intended for the *board of directors* only. It summarises ***key*** findings from 2025.\n\nDenna rapport är **konfidentiell**.\n\n## 2\n> A footnote follows this sentence.{1} And the paragraph continues afterwards.\n\nEn fotnot.{1} Och mer.\n";
+    e.attach_segments(md);
+    e.take_row_changes();
+    let (t2, t10) = (text(&e, "document:2"), text(&e, "document:10"));
+    let pids: Vec<String> = ["document:2", "document:10", "document:0"].map(String::from).to_vec();
+    let v = e.insert_claude_rows(&pids);
+    assert!(v["error"].is_null(), "{v}");
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.contains("2 of 3") && msg.contains("1 have none"), "{msg}");
+    assert_eq!(text(&e, "document:2"), "Denna rapport är konfidentiell.");
+    assert_eq!(shown(&row(&e.rows(), "document:10")["tgt"]), "En fotnot.① Och mer.");
+    // The caret at the first of them.
+    assert_eq!(v["textCaret"]["pid"], "document:2");
+    // One undo takes back both, one redo puts both back.
+    e.key(Key::Undo, false);
+    assert_eq!((text(&e, "document:2"), text(&e, "document:10")), (t2.clone(), t10.clone()));
+    e.key(Key::Redo, false);
+    assert_eq!(text(&e, "document:2"), "Denna rapport är konfidentiell.");
+    assert!(text(&e, "document:10").starts_with("En fotnot."));
+    e.key(Key::Undo, false);
+    assert_eq!((text(&e, "document:2"), text(&e, "document:10")), (t2.clone(), t10.clone()));
+    e.key(Key::Redo, false);
+
+    // Done, and not done.
+    e.take_row_changes();
+    e.set_done_rows(&pids, true);
+    let ch = e.take_row_changes();
+    assert_eq!(ch["rows"].as_array().unwrap().len(), 3, "{ch}");
+    assert!(ch["rows"].as_array().unwrap().iter().all(|r| r["done"] == true));
+    e.set_done_rows(&pids[..1], false);
+    assert_eq!(e.take_row_changes()["rows"][0]["done"], false);
+
+    // Revert both, as one step.
+    let v = e.revert_rows(&pids[..2]);
+    assert!(v["error"].is_null(), "{v}");
+    assert_eq!((text(&e, "document:2"), text(&e, "document:10")), (t2.clone(), t10.clone()));
+    e.key(Key::Undo, false);
+    assert_eq!(text(&e, "document:2"), "Denna rapport är konfidentiell.");
+    assert!(text(&e, "document:10").starts_with("En fotnot."));
+}

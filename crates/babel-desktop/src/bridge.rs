@@ -251,6 +251,11 @@ pub mod qobject {
         #[cxx_name = "nativeInsertClaude"]
         fn native_insert_claude(self: Pin<&mut Backend>) -> QString;
 
+        /// An action on several rows ("claude", "done", "undone", "revert"); pids: a JSON list.
+        #[qinvokable]
+        #[cxx_name = "nativeRowsAction"]
+        fn native_rows_action(self: Pin<&mut Backend>, action: &QString, pids: &QString) -> QString;
+
         /// Attaches a segment file (Claude's translation) to the open translation.
         #[qinvokable]
         #[cxx_name = "nativeAttachClaude"]
@@ -687,6 +692,10 @@ impl qobject::Backend {
 
     fn native_insert_claude(self: Pin<&mut Self>) -> QString {
         s(&native::insert_claude())
+    }
+
+    fn native_rows_action(self: Pin<&mut Self>, action: &QString, pids: &QString) -> QString {
+        s(&native::rows_action(&action.to_string(), &pids.to_string()))
     }
 
     fn native_attach_claude(self: Pin<&mut Self>, url: &QUrl) -> QString {

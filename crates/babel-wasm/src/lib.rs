@@ -218,6 +218,13 @@ impl WasmEditor {
         self.editor.insert_claude().to_string()
     }
 
+    /// An action on several rows ("claude", "done", "undone", "revert"); pids: a JSON list.
+    #[wasm_bindgen(js_name = rowsAction)]
+    pub fn rows_action(&mut self, action: &str, pids: &str) -> String {
+        let pids: Vec<String> = serde_json::from_str(pids).unwrap_or_default();
+        self.editor.rows_action(action, &pids).to_string()
+    }
+
     #[wasm_bindgen(js_name = attachSegments)]
     pub fn attach_segments(&mut self, md: &str) -> String {
         self.editor.attach_segments(md).to_string()

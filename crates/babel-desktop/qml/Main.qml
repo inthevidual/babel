@@ -224,6 +224,7 @@ Kirigami.ApplicationWindow {
                 activePid: editor.testSegments().activePid,
                 rowText: editor.testSegments().activeText(),
                 done: editor.stats ? editor.stats.done : null,
+                picked: editor.testSegments().pickCount,
             });
         }
         onTriggered: {
@@ -263,6 +264,25 @@ Kirigami.ApplicationWindow {
                 editor.setTextView(s.textView);
             if (s.selectRow)
                 editor.testSegments().focusRow(s.selectRow[0], s.selectRow[1], s.selectRow.length > 2 ? s.selectRow[2] : s.selectRow[1]);
+            // A click in a row's translation (with Shift, Ctrl: "mods").
+            if (s.clickRow) {
+                const pt = editor.testSegments().rowPoint(s.clickRow);
+                if (pt) {
+                    Backend.testMouse(0, pt.x, pt.y, s.mods || 0);
+                    Backend.testMouse(1, pt.x, pt.y, s.mods || 0);
+                    Backend.testMouse(2, pt.x, pt.y, s.mods || 0);
+                }
+            }
+            if (s.rightClickRow) {
+                const pt = editor.testSegments().rowPoint(s.rightClickRow);
+                if (pt) {
+                    Backend.testMouse(0, pt.x, pt.y, 0);
+                    Backend.testMouse(4, pt.x, pt.y, 0);
+                    Backend.testMouse(5, pt.x, pt.y, 0);
+                }
+            }
+            if (s.rowsAction)
+                editor.testSegments().rowsAction(s.rowsAction);
             if (s.attach)
                 editor.answer(Backend.nativeAttachClaude("file://" + s.attach), false);
             if (s.menuInsert)

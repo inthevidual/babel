@@ -94,7 +94,87 @@ export class SegmentsView {
     this.typing = false;
     this.search = '';
     this.onlyOpen = false;
+    // Rows picked with Shift+click (a range) or Ctrl+click (one more), for the
+    // actions on several rows at once; where a range starts and ends.
+    this.picked = new Set();
+    this.pickFrom = null;
+    this.pickTo = null;
     this.build();
+    this.registerMenu();
+  }
+
+  // The picked rows' menu.
+  registerMenu() {
+    const rows = ctx => ctx.panel === 'rows';
+    const n = key => this.pickedPids().filter(p => this.all[this.at.get(p)]?.[key]).length;
+    const write = t => navigator.clipboard.writeText(t).catch(() => {});
+    this.view.menu
+      .add({ group: 'rows', label: () => `Insert Claude’s translation (${n('claude')} of ${this.picked.size})`, hint: 'Ctrl+1', when: ctx => rows(ctx) && !!this.view.state.claude, enabled: () => n('claude') > 0, run: () => this.rowsAction('claude') })
+      .add({ group: 'rows', label: () => `Mark ${this.picked.size} as done`, hint: 'Ctrl+Enter', when: rows, run: () => this.rowsAction('done') })
+      .add({ group: 'rows', label: 'Unmark as done', when: rows, enabled: () => n('done') > 0, run: () => this.rowsAction('undone') })
+      .add({ group: 'rows', label: 'Revert to the original', when: rows, enabled: () => n('edited') > 0, run: () => this.rowsAction('revert') })
+      .add({ group: 'rows-copy', label: 'Copy the translations', when: rows, run: () => write(this.pickedPids().map(p => textOf(this.all[this.at.get(p)].tgt)).join('\n')) })
+      .add({ group: 'rows-copy', label: 'Copy the originals', when: rows, run: () => write(this.pickedPids().map(p => textOf(this.all[this.at.get(p)].src)).join('\n')) });
+  }
+
+  // ── Several rows ──────────────────────────────────────────────────────
+
+  // The picked rows, in the order shown.
+  pickedPids() {
+    return [...this.list.children].map(r => r.dataset.pid).filter(p => this.picked.has(p));
+  }
+
+  showPicks() {
+    for (const [pid, e] of this.els) e.row.classList.toggle('picked', this.picked.has(pid));
+    this.panel();
+  }
+
+  clearPicks() {
+    if (!this.picked.size && !this.pickFrom) return;
+    this.picked.clear();
+    this.pickFrom = this.pickTo = null;
+    this.showPicks();
+  }
+
+  // Shift+click: the rows from where the range starts (the row being worked on) to this one.
+  pickRange(pid) {
+    if (!this.pickFrom) this.pickFrom = this.active || pid;
+    this.pickTo = pid;
+    const shown = [...this.list.children].map(r => r.dataset.pid);
+    let a = shown.indexOf(this.pickFrom), b = shown.indexOf(pid);
+    if (a < 0) a = b;
+    this.picked = new Set(shown.slice(Math.min(a, b), Math.max(a, b) + 1));
+    this.showPicks();
+  }
+
+  // Ctrl+click: this row in, or out.
+  pickToggle(pid) {
+    if (!this.picked.size && this.active && this.active !== pid) this.picked.add(this.active);
+    if (this.picked.has(pid)) this.picked.delete(pid);
+    else this.picked.add(pid);
+    this.pickFrom = this.pickTo = pid;
+    this.showPicks();
+  }
+
+  // Shift+Up/Down at a row's edge: the range one row further.
+  pickStep(pid, dir) {
+    if (!this.pickFrom) this.pickFrom = this.pickTo = pid;
+    const e = this.els.get(this.pickTo);
+    const next = dir > 0 ? e?.row.nextElementSibling : e?.row.previousElementSibling;
+    if (!next) return;
+    this.pickRange(next.dataset.pid);
+    next.scrollIntoView({ block: 'nearest' });
+  }
+
+  // An action on the picked rows: "claude", "done", "undone", "revert".
+  rowsAction(action) {
+    const pids = this.pickedPids();
+    if (pids.length) this.view.answer(this.ed.rowsAction(action, JSON.stringify(pids)));
+  }
+
+  // Ctrl+Enter on picked rows: all done, or (when they all are) none.
+  toggleDonePicked() {
+    this.rowsAction(this.pickedPids().every(p => this.all[this.at.get(p)]?.done) ? 'undone' : 'done');
   }
 
   build() {
@@ -167,6 +247,7 @@ export class SegmentsView {
     this.list.append(frag);
     this.count.textContent = shown === this.all.length ? `${this.all.length} segments` : `${shown} of ${this.all.length} segments`;
     if (this.active) this.els.get(this.active)?.row.classList.add('active');
+    for (const p of this.picked) this.els.get(p)?.row.classList.add('picked');
   }
 
   rowEl(r) {
@@ -191,6 +272,28 @@ export class SegmentsView {
     this.status(r);
     this.fill(r.pid, r.tgt);
     this.wireCell(r.pid, e);
+    // Shift+click and Ctrl+click pick rows (not text); a right-click on picked
+    // rows opens their menu; a plain click puts them down.
+    row.addEventListener('mousedown', ev => {
+      if (ev.button !== 0) return;
+      const ctrl = ev.ctrlKey || ev.metaKey;
+      if (ev.shiftKey && (this.picked.size || r.pid !== this.active)) {
+        ev.preventDefault();
+        this.pickRange(r.pid);
+      } else if (ctrl && !ev.shiftKey) {
+        ev.preventDefault();
+        this.pickToggle(r.pid);
+      } else {
+        this.clearPicks();
+      }
+    }, true);
+    row.addEventListener('contextmenu', ev => {
+      if (!this.picked.size) return;
+      if (!this.picked.has(r.pid)) { this.clearPicks(); return; }
+      ev.preventDefault();
+      ev.stopPropagation();
+      this.view.menu.open({ panel: 'rows' }, ev.clientX, ev.clientY);
+    }, true);
     src.addEventListener('contextmenu', ev => {
       ev.preventDefault();
       const sel = String(window.getSelection() ?? '').trim();
@@ -308,6 +411,7 @@ export class SegmentsView {
     let b = 0;
     while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b]) b++;
     e.known = now;
+    this.clearPicks();
     this.typing = true;
     this.view.answer(this.ed.textEdit(pid, a, was.length - b, now.slice(a, now.length - b)));
   }
@@ -377,6 +481,9 @@ export class SegmentsView {
       const ctrl = ev.ctrlKey || ev.metaKey;
       const k = ev.key.toLowerCase();
       const stop = () => { ev.preventDefault(); ev.stopPropagation(); };
+      if (this.picked.size && ev.key === 'Escape') { stop(); this.clearPicks(); return; }
+      if (this.picked.size && ev.key === 'Enter' && ctrl) { stop(); this.toggleDonePicked(); return; }
+      if (this.picked.size && ctrl && k === '1') { stop(); this.rowsAction('claude'); return; }
       if (ev.key === 'Enter' && ctrl) { stop(); this.done(pid); return; }
       if (ev.key === 'Enter' && ev.shiftKey) { stop(); this.insert(pid, '\n'); return; }
       if (ev.key === 'Enter') { stop(); this.move(pid, 1); return; }
@@ -385,6 +492,9 @@ export class SegmentsView {
       if (ctrl && k === 'k') { stop(); this.sync(pid); this.view.pasteLink(); return; }
       if (ctrl && k === '1') { stop(); this.insertClaude(pid); return; }
       const [a, f] = this.selection(t);
+      const len = domText(t).length;
+      if (ev.shiftKey && !ctrl && (this.picked.size || a === f) && ev.key === 'ArrowUp' && f === 0) { stop(); this.pickStep(pid, -1); return; }
+      if (ev.shiftKey && !ctrl && (this.picked.size || a === f) && ev.key === 'ArrowDown' && f === len) { stop(); this.pickStep(pid, 1); return; }
       if (ev.key === 'ArrowUp' && !ev.shiftKey && a === f && a === 0) { stop(); this.move(pid, -1); return; }
       if (ev.key === 'ArrowDown' && !ev.shiftKey && a === f && f === domText(t).length) { stop(); this.move(pid, 1); return; }
     });
@@ -416,6 +526,7 @@ export class SegmentsView {
 
   // The row being worked on: Claude's translation of it, and what to do with it.
   panel() {
+    if (this.picked.size) return this.pickedPanel();
     const r = this.all[this.at.get(this.active)];
     if (!r) { this.side.textContent = ''; return; }
     const claude = JSON.parse(this.ed.claudeSpans(r.pid));
@@ -435,6 +546,28 @@ export class SegmentsView {
       else if (act === 'attach') this.view.attachClaude();
       else if (act === 'done') this.done(r.pid);
       else if (act === 'revert') { this.view.answer(this.ed.textSelect(r.pid, 0, 0)); this.view.answer(this.ed.revert()); }
+    }));
+  }
+
+  // Several rows picked: what to do with them all.
+  pickedPanel() {
+    const n = key => this.pickedPids().filter(p => this.all[this.at.get(p)]?.[key]).length;
+    const attached = !!this.view.state.claude;
+    this.side.innerHTML = `
+      <h3>${this.picked.size} segments picked</h3>
+      <p class="fine">Shift+click picks a range of segments, Ctrl+click one more or one less. Esc or a click in a segment puts them down.</p>
+      ${attached ? `<button type="button" class="primary" data-act="claude" title="Ctrl+1" ${n('claude') ? '' : 'disabled'}>Insert Claude’s translation (${n('claude')} of ${this.picked.size})</button>`
+        : '<button type="button" class="ghost" data-act="attach">Attach Claude’s translation…</button>'}
+      <hr>
+      <button type="button" class="ghost" data-act="done" title="Ctrl+Enter">Mark as done</button>
+      <button type="button" class="ghost" data-act="undone" ${n('done') ? '' : 'disabled'}>Unmark as done</button>
+      <button type="button" class="ghost" data-act="revert" ${n('edited') ? '' : 'disabled'}>Revert to the original</button>
+      <button type="button" class="ghost" data-act="clear">Put down</button>`;
+    this.side.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+      const act = b.dataset.act;
+      if (act === 'attach') this.view.attachClaude();
+      else if (act === 'clear') this.clearPicks();
+      else this.rowsAction(act);
     }));
   }
 }

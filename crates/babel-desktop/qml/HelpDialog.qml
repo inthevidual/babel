@@ -27,6 +27,7 @@ Kirigami.Dialog {
         ["Right-click", "In the translation: revert, copy the original. In the original: copy, look up in Merriam-Webster, copy a link"],
         ["Click in the original", "Go to the paragraph's translation"],
         ["Ctrl + T", "Text view (segments side by side) or the pages. In the text view: Enter next segment, Ctrl + Enter done and next, Ctrl + 1 insert Claude's translation, Up/Down at a segment's edge to the one before/after"],
+        ["Shift + click", "In the text view: pick the segments from the one you're in to this one (Ctrl + click: one more or one less; Shift + Up/Down at a segment's edge: one more). Then Ctrl + 1, Ctrl + Enter or a right-click act on them all; Esc puts them down"],
         ["⋮ › Attach Claude's Translation…", "A segment file Claude translated (the babel-translate skill); then right-click a paragraph › Insert Claude's Translation"],
     ]
 

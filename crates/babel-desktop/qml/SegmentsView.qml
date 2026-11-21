@@ -24,6 +24,14 @@ Item {
     property bool typing: false
     property string search: ""
     property bool onlyOpen: false
+    // Rows picked with Shift+click (a range) or Ctrl+click (one more), for the
+    // actions on several rows at once: pid → true; where a range starts and ends.
+    property var picked: ({})
+    property int pickCount: 0
+    property string pickFrom: ""
+    property string pickTo: ""
+    // Counts the editor's answers: what is said of the picked rows follows them.
+    property int rev: 0
 
     readonly property color chipBack: Qt.alpha(Kirigami.Theme.textColor, 0.12)
     readonly property color chipText: Kirigami.Theme.disabledTextColor
@@ -148,6 +156,7 @@ Item {
         if (tc)
             setActive(tc.pid);
         typing = false;
+        rev++;
     }
 
     function setActive(pid) {
@@ -185,6 +194,107 @@ Item {
     function sync(pid, edit) {
         const anchor = edit.cursorPosition === edit.selectionStart ? edit.selectionEnd : edit.selectionStart;
         page.answer(Backend.nativeTextSelect(pid, anchor, edit.cursorPosition), false);
+    }
+
+    // ── Several rows ─────────────────────────────────────────────────────
+
+    // The picked rows, in the order shown.
+    function pickedPids() {
+        const out = [];
+        for (let i = 0; i < rows.count; i++) {
+            const p = rows.get(i).pid;
+            if (picked[p])
+                out.push(p);
+        }
+        return out;
+    }
+
+    function setPicked(m) {
+        picked = m;
+        pickCount = Object.keys(m).length;
+    }
+
+    function clearPicks() {
+        if (pickCount)
+            setPicked({});
+        pickFrom = "";
+        pickTo = "";
+    }
+
+    // Shift+click: the rows from where the range starts (the row being worked
+    // on) to this one.
+    function pickRange(pid) {
+        if (!pickFrom)
+            pickFrom = activePid || pid;
+        pickTo = pid;
+        let a = shownAt[pickFrom], b = shownAt[pid];
+        if (a === undefined)
+            a = b;
+        const m = {};
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++)
+            m[rows.get(i).pid] = true;
+        setPicked(m);
+    }
+
+    // Ctrl+click: this row in, or out.
+    function pickToggle(pid) {
+        const m = Object.assign({}, picked);
+        if (!pickCount && activePid && activePid !== pid)
+            m[activePid] = true;
+        if (m[pid])
+            delete m[pid];
+        else
+            m[pid] = true;
+        pickFrom = pid;
+        pickTo = pid;
+        setPicked(m);
+    }
+
+    // Shift+Up/Down at a row's edge: the range one row further.
+    function pickStep(fromPid, dir) {
+        if (!pickFrom) {
+            pickFrom = fromPid;
+            pickTo = fromPid;
+        }
+        const j = shownAt[pickTo] + dir;
+        if (j < 0 || j >= rows.count)
+            return;
+        pickRange(rows.get(j).pid);
+        list.positionViewAtIndex(j, ListView.Contain);
+    }
+
+    // An action on the picked rows: "claude", "done", "undone", "revert".
+    function rowsAction(action) {
+        const pids = pickedPids();
+        if (!pids.length)
+            return;
+        page.answer(Backend.nativeRowsAction(action, JSON.stringify(pids)), false);
+    }
+
+    // Ctrl+Enter on picked rows: all done, or (when they all are) none.
+    function toggleDonePicked() {
+        const pids = pickedPids();
+        rowsAction(pids.every(p => all[at[p]] && all[at[p]].done) ? "undone" : "done");
+    }
+
+    function pickedWith(key) {
+        rev;
+        return pickedPids().filter(p => all[at[p]] && all[at[p]][key]).length;
+    }
+
+    function copyPicked(side) {
+        Backend.copyText(pickedPids().map(p => textOf(all[at[p]][side])).join("\n"));
+    }
+
+    // For the UI tests: where a row's translation is, in the window.
+    function rowPoint(pid) {
+        const i = shownAt[pid];
+        if (i === undefined)
+            return null;
+        list.positionViewAtIndex(i, ListView.Contain);
+        list.forceLayout();
+        const item = list.itemAtIndex(i);
+        return item ? item.tgtPoint() : null;
     }
 
     // For the UI tests: a row's rich text as the editor has it.
@@ -276,9 +386,14 @@ Item {
                     required property bool editable
 
                     readonly property bool active: view.activePid === pid
+                    readonly property bool isPicked: !!view.picked[pid]
                     width: ListView.view.width
                     implicitHeight: rowBox.implicitHeight + Kirigami.Units.largeSpacing * 2
-                    color: active ? Qt.alpha(Kirigami.Theme.highlightColor, 0.10) : (index % 2 ? Kirigami.Theme.alternateBackgroundColor : Kirigami.Theme.backgroundColor)
+                    color: isPicked ? Qt.alpha(Kirigami.Theme.highlightColor, 0.25) : active ? Qt.alpha(Kirigami.Theme.highlightColor, 0.10) : (index % 2 ? Kirigami.Theme.alternateBackgroundColor : Kirigami.Theme.backgroundColor)
+
+                    function tgtPoint() {
+                        return tgt.mapToItem(null, Math.min(20, tgt.width / 2), 8);
+                    }
 
                     function place(anchor, atPos) {
                         tgt.forceActiveFocus();
@@ -304,7 +419,7 @@ Item {
                     }
 
                     Rectangle {
-                        visible: row.active
+                        visible: row.active || row.isPicked
                         width: 3
                         height: parent.height
                         color: Kirigami.Theme.highlightColor
@@ -427,6 +542,7 @@ Item {
                                 while (b < was.length - a && b < now.length - a && was[was.length - 1 - b] === now[now.length - 1 - b])
                                     b++;
                                 known = now;
+                                view.clearPicks();
                                 view.typing = true;
                                 view.page.answer(Backend.nativeTextEdit(row.pid, a, was.length - b, now.substring(a, now.length - b)), false);
                             }
@@ -445,7 +561,16 @@ Item {
                                 const ctrl = (event.modifiers & Qt.ControlModifier) !== 0;
                                 const shift = (event.modifiers & Qt.ShiftModifier) !== 0;
                                 const enter = event.key === Qt.Key_Return || event.key === Qt.Key_Enter;
-                                if (enter && ctrl) {
+                                if (view.pickCount && event.key === Qt.Key_Escape) {
+                                    view.clearPicks();
+                                    event.accepted = true;
+                                } else if (view.pickCount && enter && ctrl) {
+                                    view.toggleDonePicked();
+                                    event.accepted = true;
+                                } else if (view.pickCount && ctrl && event.key === Qt.Key_1) {
+                                    view.rowsAction("claude");
+                                    event.accepted = true;
+                                } else if (enter && ctrl) {
                                     view.done(row.pid, tgt);
                                     event.accepted = true;
                                 } else if (enter && !shift) {
@@ -470,6 +595,12 @@ Item {
                                 } else if (ctrl && event.key === Qt.Key_1) {
                                     view.insertClaude(row.pid, tgt);
                                     event.accepted = true;
+                                } else if (shift && !ctrl && (view.pickCount || selectionStart === selectionEnd) && event.key === Qt.Key_Up && positionToRectangle(cursorPosition).y < 2) {
+                                    view.pickStep(row.pid, -1);
+                                    event.accepted = true;
+                                } else if (shift && !ctrl && (view.pickCount || selectionStart === selectionEnd) && event.key === Qt.Key_Down && positionToRectangle(cursorPosition).y + positionToRectangle(cursorPosition).height > contentHeight - 2) {
+                                    view.pickStep(row.pid, 1);
+                                    event.accepted = true;
                                 } else if (event.key === Qt.Key_Up && !shift && positionToRectangle(cursorPosition).y < 2) {
                                     view.move(row.pid, -1);
                                     event.accepted = true;
@@ -491,6 +622,37 @@ Item {
                             }
                         }
                     }
+
+                    // Shift+click and Ctrl+click pick rows; a right-click on picked rows
+                    // opens their menu. Other clicks go on to the text below.
+                    MouseArea {
+                        anchors.fill: parent
+                        z: 10
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onPressed: mouse => {
+                            const shift = (mouse.modifiers & Qt.ShiftModifier) !== 0;
+                            const ctrl = (mouse.modifiers & Qt.ControlModifier) !== 0;
+                            if (mouse.button === Qt.RightButton) {
+                                if (view.pickCount && row.isPicked) {
+                                    rowsMenu.popup(row, mouse.x, mouse.y);
+                                    return;
+                                }
+                                mouse.accepted = false;
+                                view.clearPicks();
+                                return;
+                            }
+                            if (shift && (view.pickCount || row.pid !== view.activePid)) {
+                                view.pickRange(row.pid);
+                                return;
+                            }
+                            if (ctrl && !shift) {
+                                view.pickToggle(row.pid);
+                                return;
+                            }
+                            mouse.accepted = false;
+                            view.clearPicks();
+                        }
+                    }
                 }
             }
 
@@ -505,6 +667,66 @@ Item {
                 ColumnLayout {
                     width: Kirigami.Units.gridUnit * 18 - Kirigami.Units.largeSpacing * 2
                     x: Kirigami.Units.largeSpacing
+                    spacing: Kirigami.Units.largeSpacing
+
+                    // Several rows picked: what to do with them all.
+                    ColumnLayout {
+                        visible: view.pickCount > 0
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.largeSpacing
+                        Kirigami.Heading {
+                            Layout.topMargin: Kirigami.Units.largeSpacing
+                            level: 4
+                            text: view.pickCount + " segments picked"
+                        }
+                        QQC2.Label {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            color: Kirigami.Theme.disabledTextColor
+                            text: "Shift+click picks a range of segments, Ctrl+click one more or one less. Esc or a click in a segment puts it down."
+                        }
+                        QQC2.Button {
+                            visible: !!view.page.claude
+                            icon.name: "document-import"
+                            text: "Insert Claude's Translation"
+                            enabled: view.pickCount > 0 && view.pickedWith("claude") > 0
+                            QQC2.ToolTip.text: "Ctrl+1: in the " + view.pickedWith("claude") + " of them Claude has translated"
+                            QQC2.ToolTip.visible: hovered
+                            onClicked: view.rowsAction("claude")
+                        }
+                        QQC2.Button {
+                            visible: !view.page.claude
+                            icon.name: "document-import"
+                            text: "Attach Claude's Translation…"
+                            onClicked: view.page.attachClaude()
+                        }
+                        QQC2.Button {
+                            icon.name: "checkmark"
+                            text: "Mark as Done"
+                            onClicked: view.rowsAction("done")
+                        }
+                        QQC2.Button {
+                            icon.name: "edit-undo"
+                            text: "Unmark as Done"
+                            enabled: view.pickCount > 0 && view.pickedWith("done") > 0
+                            onClicked: view.rowsAction("undone")
+                        }
+                        QQC2.Button {
+                            icon.name: "edit-reset"
+                            text: "Revert to the Original"
+                            enabled: view.pickCount > 0 && view.pickedWith("edited") > 0
+                            onClicked: view.rowsAction("revert")
+                        }
+                        QQC2.Button {
+                            icon.name: "edit-select-none"
+                            text: "Put Down"
+                            onClicked: view.clearPicks()
+                        }
+                    }
+
+                    ColumnLayout {
+                    visible: view.pickCount === 0
+                    Layout.fillWidth: true
                     spacing: Kirigami.Units.largeSpacing
 
                     Kirigami.Heading {
@@ -569,6 +791,7 @@ Item {
                         enabled: !!(view.page.paragraph && view.page.paragraph.edited)
                         onClicked: view.page.answer(Backend.nativeRevert(), false)
                     }
+                    }
                 }
             }
         }
@@ -597,6 +820,50 @@ Item {
         else
             page.answer(Backend.nativeTextSelect(pid, 0, 0), false);
         page.answer(Backend.nativeInsertClaude(), false);
+    }
+
+    // The picked rows' menu.
+    QQC2.Menu {
+        id: rowsMenu
+        QQC2.MenuItem {
+            text: view.pickCount + " segments"
+            enabled: false
+        }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem {
+            text: "Insert Claude's Translation"
+            icon.name: "document-import"
+            enabled: !!view.page.claude && rowsMenu.opened && view.pickedWith("claude") > 0
+            onTriggered: view.rowsAction("claude")
+        }
+        QQC2.MenuItem {
+            text: "Mark as Done"
+            icon.name: "checkmark"
+            onTriggered: view.rowsAction("done")
+        }
+        QQC2.MenuItem {
+            text: "Unmark as Done"
+            icon.name: "edit-undo"
+            enabled: rowsMenu.opened && view.pickedWith("done") > 0
+            onTriggered: view.rowsAction("undone")
+        }
+        QQC2.MenuItem {
+            text: "Revert to the Original"
+            icon.name: "edit-reset"
+            enabled: rowsMenu.opened && view.pickedWith("edited") > 0
+            onTriggered: view.rowsAction("revert")
+        }
+        QQC2.MenuSeparator {}
+        QQC2.MenuItem {
+            text: "Copy the Translations"
+            icon.name: "edit-copy"
+            onTriggered: view.copyPicked("tgt")
+        }
+        QQC2.MenuItem {
+            text: "Copy the Originals"
+            icon.name: "edit-copy"
+            onTriggered: view.copyPicked("src")
+        }
     }
 
     // The original's menu: copy, the whole paragraph, look up.
