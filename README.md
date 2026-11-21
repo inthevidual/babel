@@ -278,11 +278,9 @@ packaging/macos/build-app.sh            # target/macos/Babel.app
 packaging/macos/build-app.sh --install  # and into /Applications
 ```
 
-It keeps its data in `~/Library/Application Support/Babel` (or in
-`~/.local/share/babel` when only the Qt build has been used on that Mac, so
-its translations carry over). Word documents open in it from the Finder
-(Open With), the Dock or File › Open; `Babel FILE.docx --lang=sv-SE` and
-`--project=ID` work as for the Qt app. The keys are the Mac's: ⌘ where the
+It keeps its data in `~/Library/Application Support/Babel`. Word documents
+open in it from the Finder (Open With), the Dock or File › Open;
+`Babel FILE.docx --lang=sv-SE` and `--project=ID` work as for the Qt app. The keys are the Mac's: ⌘ where the
 other editors use Ctrl, ⌘Return to mark done, Control-click for the menus;
 AppKit's key bindings and input methods work in the translation.
 

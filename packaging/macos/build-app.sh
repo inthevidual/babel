@@ -6,8 +6,7 @@
 #   packaging/macos/build-app.sh            # target/macos/Babel.app
 #   packaging/macos/build-app.sh --install  # and into /Applications (or ~/Applications)
 #
-# Babel keeps its translations in ~/Library/Application Support/Babel (or,
-# if only the Qt build has been used on this Mac, in ~/.local/share/babel).
+# Babel keeps its translations in ~/Library/Application Support/Babel.
 
 set -euo pipefail
 

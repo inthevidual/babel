@@ -13,16 +13,9 @@ use babel_editor::Key;
 use babel_pages::edit::Style;
 use serde_json::{json, Value};
 
-/// ~/Library/Application Support/Babel; or, when only the Qt build has
-/// been used on this Mac, its ~/.local/share/babel, so its translations stay.
+/// ~/Library/Application Support/Babel.
 fn default_data_dir() -> PathBuf {
-    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let mac = home.join("Library/Application Support/Babel");
-    let qt = babel_app::xdg_data_dir();
-    if !mac.join("babel.db").exists() && qt.join("babel.db").exists() {
-        return qt;
-    }
-    mac
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Library/Application Support/Babel")
 }
 
 fn c_string(s: String) -> *mut c_char {
